@@ -122,7 +122,7 @@ export default function HomeScreen() {
           Everything you&apos;ve built so far
         </Text>
       </IntroReveal>
-      <IntroReveal order={6} fade={false}>
+      <IntroReveal order={6} fade={false} style={styles.sectionCard}>
         {progress ? (
           <ProgressCard {...progress} />
         ) : (
@@ -141,7 +141,7 @@ export default function HomeScreen() {
               The ones that trip you up most often
             </Text>
           </IntroReveal>
-          <IntroReveal order={8} fade={false}>
+          <IntroReveal order={8} fade={false} style={styles.sectionCard}>
             <WordsToMaster words={words} onPracticeAll={startPractice} />
           </IntroReveal>
         </>
@@ -173,5 +173,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     marginTop: 4,
     marginBottom: 4,
+  },
+  // Breathing room between a section's title/description block and its card.
+  sectionCard: {
+    marginTop: 12,
   },
 });
