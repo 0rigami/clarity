@@ -6,7 +6,8 @@ export type AnimatedRoundedNumberProps = {
   color: string;
   fontSize: number;
   fontFamily: string;
-  weight: 'semibold' | 'bold';
+  /** Subset of SwiftUI's Font.Weight the app actually uses. */
+  weight: 'semibold' | 'bold' | 'heavy';
   duration: number;
 };
 

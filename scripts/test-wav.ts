@@ -7,13 +7,13 @@
 import { tokenizePassage } from '@/lib/passage-text';
 import { PassageAligner } from '@/services/alignment';
 import type { ChunkAssessment } from '@/services/azure-pronunciation';
+import { speakingScore } from '@/lib/score';
 import {
   buildAzureResult,
   buildChunks,
   buildLiveFallbackResult,
   fillerScore,
   MAX_CHUNK_MS,
-  overallScore,
   paceScore,
 } from '@/services/scoring';
 import {
@@ -160,11 +160,11 @@ section('downsampleWaveform');
 }
 
 // ---------------------------------------------------------------------------
-section('scoring: paceScore / fillerScore / overallScore');
+section('scoring: paceScore / fillerScore');
 {
   assertEq(paceScore(150, 150), 100, 'on target');
   assertEq(paceScore(160, 150), 100, 'within +10%');
-  assertEq(paceScore(189, 179), 100, '+5.6% still inside the ±10% score band (display tone handles orange)');
+  assertEq(paceScore(189, 179), 100, '+5.6% still inside the ±10% score band');
   assertEq(paceScore(0, 150), 30, 'no pace → floor');
   assert(paceScore(100, 150) < paceScore(140, 150), 'slower is worse');
   assertEq(paceScore(90, 150), 50, '0.6x ratio → 50');
@@ -175,7 +175,14 @@ section('scoring: paceScore / fillerScore / overallScore');
   assertEq(fillerScore(3, 60_000), 64, '3/min → 64');
   assertEq(fillerScore(20, 60_000), 30, 'floor 30');
 
-  assertEq(overallScore(90, 100, 100), Math.round(0.65 * 90 + 20 + 15), 'blend weights');
+  // Equal weighting across the five skills, so each moves the score by 1/5.
+  const flat = {
+    accuracy: 80, fluency: 80, intonation: 80,
+    paceWpm: 150, targetWpm: 150, fillerCount: 0, durationMs: 60_000,
+    source: 'azure' as const,
+  };
+  assertEq(speakingScore(flat), 88, 'mean of 80/80/100/100/80');
+  assertEq(speakingScore({ ...flat, accuracy: 60 }), 84, 'a 20pt skill drop moves the score 4pt');
 }
 
 section('scoring: buildChunks packs sentences <=28s and respects segments');
@@ -325,7 +332,15 @@ section('scoring: azure aggregation + word mapping');
     assertEq(result.words[1].score, 45, 'mispronounced keeps azure score');
     // completeness capped by attempted/total = 5/6.
     assert(result.completeness <= 84, `completeness capped by omission (got ${result.completeness})`);
-    assertEq(result.overallScore, overallScore(88, 100, fillerScore(1, 4000)), 'overall blend');
+    // The score is the mean of the five skills, not a weighted pron blend:
+    // accuracy 90, fluency 85, pace 100 (on target), fillers 30 (one filler in
+    // 4s floors the skill), intonation 80 → 77.
+    assertEq(result.overallScore, 77, 'score is the mean of the five skills');
+    assertEq(
+      result.overallScore,
+      speakingScore(result),
+      'builder and the shared score definition agree',
+    );
   }
 }
 

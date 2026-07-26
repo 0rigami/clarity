@@ -6,6 +6,24 @@ const HOUR = 3_600_000;
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
 
+const MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const;
+
+function monthDay(ms: number): string {
+  const d = new Date(ms);
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+
+/** Inclusive day span, e.g. "Feb 2 – Feb 15", collapsing to "Feb 2" when the
+ * range is a single day. Used for the longest-streak caption. */
+export function formatDayRange(startMs: number, endMs: number): string {
+  const start = monthDay(startMs);
+  const end = monthDay(endMs);
+  return start === end ? start : `${start} – ${end}`;
+}
+
 /** Compact "time since" label, e.g. "just now", "5m ago", "3h ago", "2d ago",
  * "4w ago". Coarsens as the gap grows — good enough for a "last practiced"
  * caption where exactness past a few weeks doesn't matter. */

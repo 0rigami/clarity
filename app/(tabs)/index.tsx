@@ -17,18 +17,10 @@ import { WeeklyProgress } from '@/components/weekly-progress';
 import { WordsToMaster } from '@/components/words-to-master';
 import { palette } from '@/constants/colors';
 import { fonts } from '@/constants/fonts';
-import { getPassage, PASSAGES } from '@/constants/passages';
+import { PASSAGES } from '@/constants/passages';
 import { useSessionRecords, useDerivedStats } from '@/hooks/use-session-history';
-import { timeAgo } from '@/lib/format';
-import {
-  bestSession,
-  scoreRating,
-  topChallengingWords,
-  totals,
-  weekTotals,
-} from '@/lib/stats';
-
-const MODE_LABELS = { passage: 'Passage', drill: 'Drill', freestyle: 'Freestyle' } as const;
+import { useSpeakingSummary } from '@/hooks/use-speaking-summary';
+import { topChallengingWords, totals } from '@/lib/stats';
 
 function greeting() {
   const hour = new Date().getHours();
@@ -46,6 +38,9 @@ export default function HomeScreen() {
 
   const stats = useDerivedStats();
   const records = useSessionRecords();
+  // The same rolling-7-day figures Analytics leads with, so the two tabs can
+  // never disagree about this week.
+  const summary = useSpeakingSummary();
   const percent = Math.round(stats.todayProgress * 100);
   const startPractice = () => router.push('/practice');
 
@@ -53,23 +48,14 @@ export default function HomeScreen() {
   // data. With nothing recorded yet, `progress` is null and the section shows
   // an empty state that says so rather than inventing numbers.
   const { progress, words } = useMemo(() => {
-    const best = bestSession(records);
-    if (!best) {
+    if (records.length === 0) {
       return { progress: null, words: [] as { word: string; count: number }[] };
     }
-    const now = Date.now();
     const t = totals(records);
-    const week = weekTotals(records, now);
     return {
       progress: {
-        bestScore: Math.round(t.bestOverall),
-        rating: scoreRating(t.bestOverall),
-        sessionLabel: getPassage(best.passageId)?.title ?? MODE_LABELS[best.mode],
-        timeAgo: timeAgo(best.completedAt, now),
         totalMinutes: Math.round(t.minutes),
-        minutesThisWeek: Math.round(week.minutes),
         totalSessions: t.sessions,
-        sessionsThisWeek: week.sessions,
         longestStreak: t.longestStreak,
       },
       words: topChallengingWords(records, 5),
@@ -119,12 +105,16 @@ export default function HomeScreen() {
       <IntroReveal order={5}>
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your progress</Text>
         <Text style={[styles.sectionSubtitle, { color: dark ? '#9E9EA6' : '#77777E' }]}>
-          Everything you&apos;ve built so far
+          Where your speaking stands right now
         </Text>
       </IntroReveal>
       <IntroReveal order={6} fade={false} style={styles.sectionCard}>
         {progress ? (
-          <ProgressCard {...progress} />
+          <ProgressCard
+            {...progress}
+            score={summary.score}
+            scoreDelta={summary.scoreDelta ?? undefined}
+          />
         ) : (
           <EmptyStateCard
             icon={AnalyticsUpIcon}

@@ -9,6 +9,7 @@
  */
 
 import type { TokenizedPassage } from '@/lib/passage-text';
+import { clampScore, fillerScore, paceScore, speakingScore } from '@/lib/score';
 import type { ResultWord, SessionResult, WordVerdict } from '@/types/session';
 import type { CommittedInsertion, RefWordStatus, WordCommit } from './alignment';
 import type { ChunkAssessment } from './azure-pronunciation';
@@ -183,28 +184,9 @@ export function buildChunks(
   return chunks;
 }
 
-/** 100 within ±10% of target, linear to 50 at 0.6x/1.5x, floor 30. */
-export function paceScore(paceWpm: number, targetWpm: number): number {
-  if (paceWpm <= 0 || targetWpm <= 0) return 30;
-  const ratio = paceWpm / targetWpm;
-  let score: number;
-  if (ratio >= 0.9 && ratio <= 1.1) score = 100;
-  else if (ratio < 0.9) score = 100 - ((0.9 - ratio) / 0.3) * 50;
-  else score = 100 - ((ratio - 1.1) / 0.4) * 50;
-  return Math.round(Math.max(30, Math.min(100, score)));
-}
-
-export function fillerScore(fillerCount: number, durationMs: number): number {
-  const minutes = Math.max(durationMs / 60_000, 1 / 6); // floor 10s so a short take isn't crushed
-  const perMinute = fillerCount / minutes;
-  return Math.round(Math.max(30, 100 - 12 * perMinute));
-}
-
-export function overallScore(pron: number, pace: number, filler: number): number {
-  return Math.round(0.65 * pron + 0.2 * pace + 0.15 * filler);
-}
-
-const clampScore = (v: number) => Math.max(0, Math.min(100, Math.round(v)));
+/** Re-exported so existing call sites keep importing scoring primitives from
+ * here; the definitions live in `lib/score.ts`, which sits below this module. */
+export { fillerScore, paceScore };
 
 /**
  * Base per-display-token verdicts from live alignment. Punctuation-only
@@ -351,7 +333,6 @@ export function buildAzureResult(
 
   const accuracy = clampScore(weighted((a) => a.accuracyScore));
   const fluency = clampScore(weighted((a) => a.fluencyScore));
-  const pron = clampScore(weighted((a) => a.pronScore));
 
   const prosodyChunks = succeeded.filter((c) => c.assessment.prosodyScore != null);
   const prosodyWeight = prosodyChunks.reduce((sum, c) => sum + c.chunk.matchableCount, 0);
@@ -376,11 +357,9 @@ export function buildAzureResult(
     Math.min(azureCompleteness, (100 * attempted) / Math.max(1, totalRefWords)),
   );
 
-  const pace = paceScore(params.paceWpm, params.targetWpm);
-  const filler = fillerScore(params.fillerCount, params.durationMs);
-
-  return {
-    overallScore: overallScore(pron, pace, filler),
+  // The score is the mean of the five skills below it (see lib/score.ts), so
+  // the hero number always reconciles with the skill rows the UI prints.
+  const scored = {
     accuracy,
     fluency,
     completeness,
@@ -388,11 +367,16 @@ export function buildAzureResult(
     paceWpm: params.paceWpm,
     targetWpm: params.targetWpm,
     fillerCount: params.fillerCount,
+    durationMs: params.durationMs,
+    source: 'azure',
+  } as const;
+
+  return {
+    ...scored,
+    overallScore: speakingScore(scored) ?? 0,
     words,
     audioUri: params.audioUri,
-    durationMs: params.durationMs,
     waveform: params.waveform,
-    source: 'azure',
   };
 }
 
@@ -414,7 +398,6 @@ export function buildLiveFallbackResult(params: ResultBuildParams): SessionResul
   const matchedRatio = matched / totalRefWords;
 
   const pace = paceScore(params.paceWpm, params.targetWpm);
-  const filler = fillerScore(params.fillerCount, params.durationMs);
 
   // Proxies: without Azure there is no pronunciation signal, so accuracy
   // leans on how reliably the recognizer matched the reference, fluency on
@@ -423,10 +406,11 @@ export function buildLiveFallbackResult(params: ResultBuildParams): SessionResul
   const accuracy = Math.min(95, clampScore(70 + 25 * matchedRatio));
   const fluency = Math.min(95, clampScore(0.6 * pace + 0.4 * accuracy));
   const intonation = 70;
-  const pronProxy = clampScore(0.5 * accuracy + 0.2 * fluency + 0.3 * completeness);
 
-  return {
-    overallScore: overallScore(pronProxy, pace, filler),
+  // `source: 'live'` makes sessionSkills drop intonation, so the placeholder 70
+  // above never reaches the score — it scores on Articulation, Flow, Pacing,
+  // and Fillers.
+  const scored = {
     accuracy,
     fluency,
     completeness,
@@ -434,11 +418,16 @@ export function buildLiveFallbackResult(params: ResultBuildParams): SessionResul
     paceWpm: params.paceWpm,
     targetWpm: params.targetWpm,
     fillerCount: params.fillerCount,
+    durationMs: params.durationMs,
+    source: 'live',
+  } as const;
+
+  return {
+    ...scored,
+    overallScore: speakingScore(scored) ?? 0,
     words,
     audioUri: params.audioUri,
-    durationMs: params.durationMs,
     waveform: params.waveform,
-    source: 'live',
   };
 }
 
@@ -466,10 +455,11 @@ export function buildFreestyleResult(params: FreestyleResultParams): SessionResu
   const filler = fillerScore(params.fillerCount, params.durationMs);
   const fluency = clampScore(0.55 * pace + 0.45 * filler);
 
-  return {
+  // `mode: 'freestyle'` plus `source: 'live'` makes sessionSkills drop both
+  // accuracy and intonation, so the 0 and the placeholder 70 below never reach
+  // the score — freestyle scores on Flow, Pacing, and Fillers alone.
+  const scored = {
     mode: 'freestyle',
-    transcript: params.transcript,
-    overallScore: clampScore(0.45 * fluency + 0.3 * pace + 0.25 * filler),
     accuracy: 0,
     fluency,
     completeness: 0,
@@ -477,10 +467,16 @@ export function buildFreestyleResult(params: FreestyleResultParams): SessionResu
     paceWpm: params.paceWpm,
     targetWpm: FREESTYLE_TARGET_WPM,
     fillerCount: params.fillerCount,
+    durationMs: params.durationMs,
+    source: 'live',
+  } as const;
+
+  return {
+    ...scored,
+    overallScore: speakingScore(scored) ?? 0,
+    transcript: params.transcript,
     words: [],
     audioUri: params.audioUri,
-    durationMs: params.durationMs,
     waveform: params.waveform,
-    source: 'live',
   };
 }

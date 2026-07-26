@@ -7,12 +7,14 @@
  * takes an explicit `now` timestamp so tests are deterministic.
  */
 
-import { fillerScore, paceScore } from '@/services/scoring';
+import { SKILL_ORDER } from '@/constants/metrics';
+import { cleanWordPct, sessionSkills, speakingScore, type RawMeasures } from '@/lib/score';
 import type {
   SessionRecord,
   SkillEstimate,
   SkillKey,
   SkillProfile,
+  WordCounts,
 } from '@/types/history';
 
 export const DAILY_GOAL_MINUTES = 20;
@@ -23,6 +25,17 @@ export function dayKey(ms: number): string {
   const m = `${d.getMonth() + 1}`.padStart(2, '0');
   const day = `${d.getDate()}`.padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/** Inverse of `dayKey`: local midnight for that calendar day.
+ *
+ * Must not be `new Date(key)` — that parses YYYY-MM-DD as UTC midnight, which
+ * lands on the previous local day in any negative-offset timezone. Day math
+ * that only takes differences survives the offset; anything that displays or
+ * re-keys the result does not. */
+export function dayKeyToMs(key: string): number {
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(year, month - 1, day).getTime();
 }
 
 const DAY_MS = 86_400_000;
@@ -85,25 +98,12 @@ const EWMA_WINDOW = 30;
 /** A skill needs this many samples before recommendations trust it. */
 export const SKILL_KNOWN_SAMPLES = 3;
 
-type SkillInput = {
-  /** Metric extraction; null = record not eligible for this skill. */
-  input: (r: SessionRecord) => number | null;
-};
-
-const SKILL_INPUTS: Record<SkillKey, SkillInput> = {
-  // Freestyle has no reference text, so its accuracy (0) is meaningless.
-  accuracy: { input: (r) => (r.mode === 'freestyle' ? null : r.accuracy) },
-  fluency: { input: (r) => r.fluency },
-  // Live-fallback intonation is a hardcoded placeholder — Azure-only.
-  intonation: { input: (r) => (r.source === 'azure' ? r.intonation : null) },
-  pace: { input: (r) => (r.paceWpm > 0 ? paceScore(r.paceWpm, r.targetWpm) : null) },
-  fillers: { input: (r) => fillerScore(r.fillerCount, r.durationMs) },
-};
-
-export const SKILL_KEYS = Object.keys(SKILL_INPUTS) as SkillKey[];
+export const SKILL_KEYS: readonly SkillKey[] = SKILL_ORDER;
 
 /** EWMA (α=0.3) per skill over the most recent ≤30 records, oldest→newest,
- * seeded with each skill's first eligible sample. */
+ * seeded with each skill's first eligible sample. Eligibility comes from
+ * `sessionSkills` so recommendations and the displayed scores agree on which
+ * skills a session actually measured. */
 export function skillProfile(records: readonly SessionRecord[]): SkillProfile {
   const recent = [...records]
     .sort((a, b) => a.completedAt - b.completedAt)
@@ -111,10 +111,9 @@ export function skillProfile(records: readonly SessionRecord[]): SkillProfile {
 
   const profile = {} as SkillProfile;
   for (const key of SKILL_KEYS) {
-    const { input } = SKILL_INPUTS[key];
     const estimate: SkillEstimate = { value: 0, samples: 0 };
     for (const r of recent) {
-      const x = input(r);
+      const x = sessionSkills(r)[key];
       if (x == null) continue;
       estimate.value =
         estimate.samples === 0 ? x : EWMA_ALPHA * x + (1 - EWMA_ALPHA) * estimate.value;
@@ -127,12 +126,14 @@ export function skillProfile(records: readonly SessionRecord[]): SkillProfile {
 
 // --- Analytics-ready aggregates (data now, UI later) --------------------------
 
+/** Per-day effort and raw measures. Deliberately carries no score — the one
+ * per-day score is `dailySpeakingScores`, so there's no second definition to
+ * drift from it. */
 export type DailyAggregate = {
   dayKey: string;
   minutes: number;
   sessions: number;
   /** null when the day has no sessions. */
-  avgOverall: number | null;
   avgPace: number | null;
   /** Fillers per active minute. */
   fillerRate: number | null;
@@ -163,7 +164,6 @@ export function dailyAggregates(
       dayKey: key,
       minutes,
       sessions: list.length,
-      avgOverall: avg((r) => r.overallScore),
       avgPace: avg((r) => r.paceWpm),
       fillerRate:
         minutes > 0
@@ -181,48 +181,133 @@ export type Totals = {
   longestStreak: number;
 };
 
+/** Records completed within [since, until]. Every windowed metric reads one of
+ * these slices so a screen's score, skills, and counters can't disagree about
+ * which sessions "this week" means. */
+export function recordsBetween(
+  records: readonly SessionRecord[],
+  since: number,
+  until: number,
+): SessionRecord[] {
+  return records.filter((r) => r.completedAt >= since && r.completedAt <= until);
+}
+
 /** Minutes practiced and session count within the last 7 days ending `now` —
  * the "this week" deltas next to the running totals. */
 export function weekTotals(
   records: readonly SessionRecord[],
   now: number,
 ): { minutes: number; sessions: number } {
-  const since = now - 7 * DAY_MS;
-  let minutes = 0;
-  let sessions = 0;
+  const week = recordsBetween(records, now - 7 * DAY_MS, now);
+  return {
+    minutes: week.reduce((sum, r) => sum + r.durationMs / 60_000, 0),
+    sessions: week.length,
+  };
+}
+
+/** Per-day speaking score for the last `days` days ending today, oldest first.
+ * `score` is null on days with no sessions — the chart renders those as empty
+ * stubs rather than zero-height bars. */
+export function dailySpeakingScores(
+  records: readonly SessionRecord[],
+  days: number,
+  now: number,
+): { dayKey: string; score: number | null }[] {
+  const byDay = new Map<string, SessionRecord[]>();
   for (const r of records) {
-    if (r.completedAt >= since && r.completedAt <= now) {
-      minutes += r.durationMs / 60_000;
-      sessions += 1;
-    }
+    const key = dayKey(r.completedAt);
+    const list = byDay.get(key) ?? [];
+    list.push(r);
+    byDay.set(key, list);
   }
-  return { minutes, sessions };
+
+  const out: { dayKey: string; score: number | null }[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const key = dayKey(now - i * DAY_MS);
+    const list = byDay.get(key);
+    out.push({ dayKey: key, score: list?.length ? speakingScore(list) : null });
+  }
+  return out;
+}
+
+/** The raw measures behind a window's skill captions: clean-word share across
+ * every assessed word, mean pace vs mean target, and fillers per session. */
+export function windowRawMeasures(records: readonly SessionRecord[]): RawMeasures {
+  if (records.length === 0) {
+    return { cleanPct: null, avgWpm: null, targetWpm: null, fillers: null };
+  }
+
+  const totalCounts = records.reduce<WordCounts>(
+    (acc, r) => ({
+      good: acc.good + r.wordCounts.good,
+      mispronounced: acc.mispronounced + r.wordCounts.mispronounced,
+      omitted: acc.omitted + r.wordCounts.omitted,
+      inserted: acc.inserted + r.wordCounts.inserted,
+    }),
+    { good: 0, mispronounced: 0, omitted: 0, inserted: 0 },
+  );
+
+  // Only sessions that actually measured pace should move the average.
+  const paced = records.filter((r) => r.paceWpm > 0);
+  const mean = (values: number[]) =>
+    values.length ? values.reduce((s, v) => s + v, 0) / values.length : null;
+
+  return {
+    cleanPct: cleanWordPct(totalCounts),
+    avgWpm: mean(paced.map((r) => r.paceWpm)),
+    targetWpm: mean(paced.map((r) => r.targetWpm)),
+    fillers: Math.round(records.reduce((s, r) => s + r.fillerCount, 0) / records.length),
+  };
 }
 
 /** The highest-scoring session, ties broken by most recent — null when there's
- * no history yet. Drives the "best score" hero. */
+ * no history yet. Ranks by the derived speaking score, never the persisted
+ * `overallScore`, so records written under an older formula rank correctly. */
 export function bestSession(records: readonly SessionRecord[]): SessionRecord | null {
   let best: SessionRecord | null = null;
+  let bestScore = -1;
   for (const r of records) {
-    if (
-      best == null ||
-      r.overallScore > best.overallScore ||
-      (r.overallScore === best.overallScore && r.completedAt > best.completedAt)
-    ) {
+    const score = speakingScore(r) ?? 0;
+    if (score > bestScore || (score === bestScore && best != null && r.completedAt > best.completedAt)) {
       best = r;
+      bestScore = score;
     }
   }
   return best;
 }
 
-/** Rating tier label for an overall score (0–100). Bands are wide so the badge
- * feels earned, not incremental. */
-export function scoreRating(score: number): string {
-  if (score >= 90) return 'ORATOR';
-  if (score >= 80) return 'SPEAKER';
-  if (score >= 70) return 'PRESENTER';
-  if (score >= 50) return 'RISING';
-  return 'WARMING UP';
+/** Sorted distinct local-calendar days on which anything was practiced. */
+function practiceDays(records: readonly SessionRecord[]): string[] {
+  return [...new Set(records.map((r) => dayKey(r.completedAt)))].sort();
+}
+
+/** The longest run of consecutive practice days, with its bounds — the date
+ * range under the Records "Longest streak" row. null with no history. */
+export function longestStreakRange(
+  records: readonly SessionRecord[],
+): { startMs: number; endMs: number; length: number } | null {
+  const days = practiceDays(records);
+  if (days.length === 0) return null;
+
+  let best = { start: days[0], end: days[0], length: 1 };
+  let runStart = days[0];
+  let run = 1;
+  for (let i = 1; i < days.length; i++) {
+    const gap = Math.round((dayKeyToMs(days[i]) - dayKeyToMs(days[i - 1])) / DAY_MS);
+    if (gap === 1) {
+      run += 1;
+    } else {
+      runStart = days[i];
+      run = 1;
+    }
+    if (run > best.length) best = { start: runStart, end: days[i], length: run };
+  }
+
+  return {
+    startMs: dayKeyToMs(best.start),
+    endMs: dayKeyToMs(best.end),
+    length: best.length,
+  };
 }
 
 export function totals(records: readonly SessionRecord[]): Totals {
@@ -230,37 +315,22 @@ export function totals(records: readonly SessionRecord[]): Totals {
   let bestOverall = 0;
   for (const r of records) {
     minutes += r.durationMs / 60_000;
-    if (r.overallScore > bestOverall) bestOverall = r.overallScore;
+    const score = speakingScore(r) ?? 0;
+    if (score > bestOverall) bestOverall = score;
   }
 
-  // Longest run of consecutive practice days across all history.
-  const days = [...new Set(records.map((r) => dayKey(r.completedAt)))].sort();
-  let longestStreak = 0;
-  let run = 0;
-  let prev: string | null = null;
-  for (const key of days) {
-    if (prev != null) {
-      const gap = Math.round(
-        (new Date(key).getTime() - new Date(prev).getTime()) / DAY_MS,
-      );
-      run = gap === 1 ? run + 1 : 1;
-    } else {
-      run = 1;
-    }
-    if (run > longestStreak) longestStreak = run;
-    prev = key;
-  }
-
-  return { minutes, sessions: records.length, bestOverall, longestStreak };
+  return {
+    minutes,
+    sessions: records.length,
+    bestOverall,
+    longestStreak: longestStreakRange(records)?.length ?? 0,
+  };
 }
 
-export type MetricKey =
-  | 'overallScore'
-  | 'accuracy'
-  | 'fluency'
-  | 'intonation'
-  | 'paceWpm'
-  | 'fillerCount';
+/** Raw persisted measures only. The score is deliberately absent: a session's
+ * persisted `overallScore` may predate the current definition, so score trends
+ * must come from `dailySpeakingScores`. */
+export type MetricKey = 'accuracy' | 'fluency' | 'intonation' | 'paceWpm' | 'fillerCount';
 
 /** Last-n `{completedAt, value}` series for sparklines, oldest first. */
 export function metricTrend(

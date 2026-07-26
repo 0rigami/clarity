@@ -1,150 +1,101 @@
 import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { StyleSheet, Text, useColorScheme, View } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
 
+import { DeltaLabel, ScoreValue, TickBar } from '@/components/metrics';
 import { fonts } from '@/constants/fonts';
+import { metricColors, type MetricColors } from '@/constants/metrics';
+import { scoreBand } from '@/lib/score';
 
+/** Ticks in the hero meter. Denser than the skill bars because this one spans
+ * the full card width with no trailing score to leave room for. */
 const TICK_COUNT = 35;
 
 const THEME = {
   light: {
-    glassTint: 'rgba(255,255,255,0.45)',
-    solidFallback: 'rgba(255,255,255,0.96)',
-    foreground: '#111114',
-    secondary: '#77777E',
-    muted: '#9A9AA0',
-    tick: '#111114',
-    track: 'rgba(17,17,20,0.16)',
-    divider: '#E4E4E9',
     badgeBg: '#1C1C21',
     badgeText: '#FFFFFF',
-    positive: '#23A55A',
+    divider: '#E4E4E9',
   },
   dark: {
-    glassTint: 'rgba(10,10,12,0.55)',
-    solidFallback: 'rgba(26,26,30,0.96)',
-    foreground: '#FFFFFF',
-    secondary: '#9E9EA6',
-    muted: '#7C7C84',
-    tick: '#FFFFFF',
-    track: 'rgba(255,255,255,0.18)',
-    divider: 'rgba(255,255,255,0.12)',
     badgeBg: '#F2F2F5',
     badgeText: '#111114',
-    positive: '#2ECC71',
+    divider: 'rgba(255,255,255,0.12)',
   },
 } as const;
 
 export type ProgressCardProps = {
-  /** Best overall score, 0–100. */
-  bestScore: number;
-  /** Tier label for the badge (e.g. "ORATOR"). */
-  rating: string;
-  /** What earned the best score (passage title or mode label). */
-  sessionLabel: string;
-  /** Relative time of the best session, e.g. "2d ago". */
-  timeAgo: string;
+  /** Rolling 7-day speaking score; null when the week has nothing measured. */
+  score: number | null;
+  /** Change vs the previous 7 days. Omit when there's no prior week. */
+  scoreDelta?: number;
   totalMinutes: number;
-  minutesThisWeek: number;
   totalSessions: number;
-  sessionsThisWeek: number;
   longestStreak: number;
 };
 
-/** Chunky upward arrow that fronts the green "this week" deltas — traced from
- * the design so it reads at 11px where a stroke icon would smear. */
-function UpArrow({ color }: { color: string }) {
-  return (
-    <Svg width={11} height={11} viewBox="0 0 12 12">
-      <Path d="M6 2 L10 7 L7.5 7 L7.5 10 L4.5 10 L4.5 7 L2 7 Z" fill={color} />
-    </Svg>
-  );
-}
-
-/** A tick-meter: a row of rounded bars, the first `fill` fraction inked and the
- * rest dimmed to a track — the same visual language as the daily-goal gauge. */
-function TickMeter({ fill, tick, track }: { fill: number; tick: string; track: string }) {
-  const filled = Math.round(Math.max(0, Math.min(fill, 1)) * TICK_COUNT);
-  return (
-    <View style={styles.meter}>
-      {Array.from({ length: TICK_COUNT }, (_, i) => (
-        <View
-          key={i}
-          style={[styles.tick, { backgroundColor: i < filled ? tick : track }]}
-        />
-      ))}
-    </View>
-  );
-}
-
-/** One momentum stat: big value + unit on top, a small caption below (green
- * "N this week" delta, or a muted label for the streak). */
+/** One all-time stat: big value plus a muted label beneath. */
 function Stat({
   value,
   unit,
-  delta,
-  caption,
+  label,
   theme,
 }: {
   value: string;
   unit: string;
-  delta?: number;
-  caption?: string;
-  theme: (typeof THEME)[keyof typeof THEME];
+  label: string;
+  theme: MetricColors;
 }) {
   return (
     <View style={styles.stat}>
       <View style={styles.statTop}>
-        <Text style={[styles.statValue, { color: theme.foreground }]}>{value}</Text>
-        <Text style={[styles.statUnit, { color: theme.secondary }]}>{unit}</Text>
+        <Text style={[styles.statValue, { color: theme.ink }]}>{value}</Text>
+        <Text style={[styles.statUnit, { color: theme.unit }]}>{unit}</Text>
       </View>
-      {delta != null ? (
-        <View style={styles.statDelta}>
-          <UpArrow color={theme.positive} />
-          <Text style={[styles.deltaLabel, { color: theme.positive }]}>{delta} this week</Text>
-        </View>
-      ) : (
-        <Text style={[styles.captionLabel, { color: theme.muted }]}>{caption}</Text>
-      )}
+      <Text style={[styles.statLabel, { color: theme.unit }]}>{label}</Text>
     </View>
   );
 }
 
-/** "Your progress" body: a frosted best-score hero above a three-up momentum
- * row (minutes, sessions, longest streak). */
+/**
+ * "Your progress": where a user's speaking stands right now.
+ *
+ * The hero is the same rolling 7-day speaking score Analytics leads with — not
+ * a personal best — so opening either screen shows the same number. All-time
+ * totals sit underneath, and the week's change lives in the hero rather than
+ * being repeated per stat.
+ */
 export function ProgressCard({
-  bestScore,
-  rating,
-  sessionLabel,
-  timeAgo,
+  score,
+  scoreDelta,
   totalMinutes,
-  minutesThisWeek,
   totalSessions,
-  sessionsThisWeek,
   longestStreak,
 }: ProgressCardProps) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
-  const theme = THEME[scheme];
+  const theme = metricColors[scheme];
+  const chrome = THEME[scheme];
   const hasGlass = isLiquidGlassAvailable();
+  const hours = totalMinutes >= 60 ? Math.round(totalMinutes / 60) : null;
 
   const heroBody = (
     <>
-      <Text style={[styles.eyebrow, { color: theme.secondary }]}>BEST SCORE</Text>
+      <Text style={[styles.eyebrow, { color: theme.label }]}>SPEAKING SCORE</Text>
       <View style={styles.scoreRow}>
-        <View style={styles.scoreValue}>
-          <Text style={[styles.score, { color: theme.foreground }]}>{bestScore}</Text>
-          <Text style={[styles.scoreMax, { color: theme.muted }]}>/100</Text>
-        </View>
-        <View style={[styles.badge, { backgroundColor: theme.badgeBg }]}>
-          <Text style={[styles.badgeLabel, { color: theme.badgeText }]}>{rating}</Text>
-        </View>
+        <ScoreValue value={score} size={40} maxSize={18} />
+        {score != null && (
+          <View style={[styles.badge, { backgroundColor: chrome.badgeBg }]}>
+            <Text style={[styles.badgeLabel, { color: chrome.badgeText }]}>
+              {scoreBand(score).toUpperCase()}
+            </Text>
+          </View>
+        )}
       </View>
-      <TickMeter fill={bestScore / 100} tick={theme.tick} track={theme.track} />
+      <TickBar fill={score != null ? score / 100 : 0} tickCount={TICK_COUNT} height={20} />
       <View style={styles.metaRow}>
-        <Text style={[styles.metaName, { color: theme.secondary }]} numberOfLines={1}>
-          {sessionLabel}
-        </Text>
-        <Text style={[styles.metaTime, { color: theme.muted }]}>{timeAgo}</Text>
+        <Text style={[styles.metaLabel, { color: theme.label }]}>Last 7 days</Text>
+        {scoreDelta != null && scoreDelta !== 0 && (
+          <DeltaLabel delta={scoreDelta} suffix="this week" />
+        )}
       </View>
     </>
   );
@@ -152,7 +103,9 @@ export function ProgressCard({
   return (
     <View>
       {hasGlass ? (
-        <GlassView glassEffectStyle="regular" style={[styles.hero, { backgroundColor: theme.glassTint }]}>
+        <GlassView
+          glassEffectStyle="regular"
+          style={[styles.hero, { backgroundColor: theme.glassTint }]}>
           {heroBody}
         </GlassView>
       ) : (
@@ -161,23 +114,23 @@ export function ProgressCard({
 
       <View style={styles.momentum}>
         <Stat
-          value={String(totalMinutes)}
-          unit="min"
-          delta={minutesThisWeek}
+          value={String(hours ?? Math.round(totalMinutes))}
+          unit={hours != null ? 'h' : 'min'}
+          label="practice"
           theme={theme}
         />
-        <View style={[styles.momentumDivider, { backgroundColor: theme.divider }]} />
+        <View style={[styles.momentumDivider, { backgroundColor: chrome.divider }]} />
         <Stat
           value={String(totalSessions)}
-          unit="sessions"
-          delta={sessionsThisWeek}
+          unit=""
+          label={totalSessions === 1 ? 'session' : 'sessions'}
           theme={theme}
         />
-        <View style={[styles.momentumDivider, { backgroundColor: theme.divider }]} />
+        <View style={[styles.momentumDivider, { backgroundColor: chrome.divider }]} />
         <Stat
           value={String(longestStreak)}
-          unit="days"
-          caption="longest streak"
+          unit={longestStreak === 1 ? 'day' : 'days'}
+          label="best streak"
           theme={theme}
         />
       </View>
@@ -204,20 +157,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: -2,
   },
-  scoreValue: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 2,
-  },
-  score: {
-    fontSize: 40,
-    fontFamily: fonts.heavy,
-    letterSpacing: -1,
-  },
-  scoreMax: {
-    fontSize: 18,
-    fontFamily: fonts.semibold,
-  },
   badge: {
     paddingVertical: 5,
     paddingHorizontal: 12,
@@ -229,30 +168,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     letterSpacing: 0.5,
   },
-  meter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    height: 20,
-  },
-  tick: {
-    width: 4,
-    height: 20,
-    borderRadius: 2,
-  },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  metaName: {
-    flex: 1,
+  metaLabel: {
     fontSize: 13,
     fontFamily: fonts.medium,
-  },
-  metaTime: {
-    fontSize: 13,
-    fontFamily: fonts.semibold,
   },
   momentum: {
     flexDirection: 'row',
@@ -279,16 +202,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: fonts.medium,
   },
-  statDelta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  deltaLabel: {
-    fontSize: 12,
-    fontFamily: fonts.semibold,
-  },
-  captionLabel: {
+  statLabel: {
     fontSize: 12,
     fontFamily: fonts.medium,
   },

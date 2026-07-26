@@ -7,6 +7,7 @@ import {
 } from 'react-native-reanimated';
 
 import { tokenizePassage } from '@/lib/passage-text';
+import { speakingScore } from '@/lib/score';
 import type {
   Passage,
   PracticeError,
@@ -38,8 +39,7 @@ function buildMockResult(passage: Passage, durationMs: number): SessionResult {
     return 0.2 + v * 0.8;
   });
 
-  return {
-    overallScore: 88,
+  const scored = {
     accuracy: 92,
     fluency: 85,
     completeness: 98,
@@ -47,13 +47,21 @@ function buildMockResult(passage: Passage, durationMs: number): SessionResult {
     paceWpm: 189,
     targetWpm: passage.targetWpm,
     fillerCount: 3,
-    words: resultWords,
-    audioUri: null,
     durationMs,
-    waveform,
     // The mock stands in for a successful Azure-scored session; 'live'
     // de-emphasis styling is reserved for the real fallback path.
     source: 'azure',
+  } as const;
+
+  return {
+    ...scored,
+    // Derived, not hardcoded: a fixed number here would disagree with the five
+    // skills the summary prints beneath it — exactly the mismatch the shared
+    // score definition exists to prevent.
+    overallScore: speakingScore(scored) ?? 0,
+    words: resultWords,
+    audioUri: null,
+    waveform,
   };
 }
 

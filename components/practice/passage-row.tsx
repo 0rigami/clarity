@@ -6,7 +6,7 @@ import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native'
 
 import { AnimatedDashedBorder } from '@/components/animated-dashed-border';
 import { fonts } from '@/constants/fonts';
-import { SKILL_LABELS } from '@/constants/skills';
+import { SKILL_LABELS } from '@/constants/metrics';
 import type { Passage } from '@/types/session';
 
 const THUMB_SIZE = 56;

@@ -3,11 +3,24 @@
  *   bun scripts/test-stats.ts
  */
 
+import { formatDayRange } from '@/lib/format';
+import {
+  cleanWordPct,
+  focusSkill,
+  scoreBand,
+  sessionSkills,
+  skillWindow,
+  speakingScore,
+} from '@/lib/score';
 import {
   DAILY_GOAL_MINUTES,
   dailyAggregates,
+  dailySpeakingScores,
   dayKey,
+  dayKeyToMs,
+  longestStreakRange,
   metricTrend,
+  recordsBetween,
   skillProfile,
   streak,
   todayProgress,
@@ -72,6 +85,12 @@ section('dayKey');
 {
   const d = new Date(2026, 0, 5, 23, 59).getTime();
   assertEq(dayKey(d), '2026-01-05', 'formats local YYYY-MM-DD with padding');
+
+  // Regression guard: `new Date('2026-01-05')` parses as UTC midnight, which is
+  // Jan 4 locally west of Greenwich. dayKeyToMs must round-trip in local time.
+  assertEq(dayKey(dayKeyToMs('2026-01-05')), '2026-01-05', 'dayKeyToMs round-trips');
+  assertEq(dayKey(dayKeyToMs(dayKey(d))), dayKey(d), 'round-trip is stable for a late-evening time');
+  assertEq(new Date(dayKeyToMs('2026-01-05')).getHours(), 0, 'lands on local midnight');
 }
 
 // ---------------------------------------------------------------------------
@@ -173,28 +192,127 @@ section('dailyAggregates / totals / metricTrend / topChallengingWords');
   const series = dailyAggregates(recordsList, 3, NOW);
   assertEq(series.length, 3, 'one entry per day');
   assertEq(series[0].sessions, 0, 'empty day has zero sessions');
-  assertEq(series[0].avgOverall, null, 'empty day has null averages');
+  assertEq(series[0].avgPace, null, 'empty day has null averages');
   assertEq(series[1].sessions, 2, 'yesterday grouped');
-  assertEq(series[1].avgOverall, 70, 'yesterday average score');
   assertEq(series[1].fillerRate, 2, 'fillers per active minute');
   assertEq(series[2].minutes, 2, "today's minutes");
 
   const t = totals(recordsList);
   assertEq(t.sessions, 3, 'total sessions');
-  assertEq(t.bestOverall, 90, 'best score');
+  // 86, not the fixtures' persisted 90: the best score derives from the five
+  // skills, so a record whose stored overallScore predates that definition
+  // (or was never consistent with its own skills) can't inflate the best.
+  assertEq(t.bestOverall, 86, 'best score derives from skills, not the persisted field');
   assertEq(t.longestStreak, 2, 'longest streak spans both days');
 
   const gapped = [rec({ completedAt: NOW - 5 * DAY }), rec({ completedAt: NOW })];
   assertEq(totals(gapped).longestStreak, 1, 'gap resets longest streak');
 
-  const trend = metricTrend(recordsList, 'overallScore', 2);
-  assertEq(trend.map((p) => p.value), [80, 90], 'last-n, oldest first (stable within day)');
+  const trend = metricTrend(recordsList, 'fluency', 2);
+  assertEq(trend.map((p) => p.value), [82, 82], 'last-n, oldest first (stable within day)');
 
   const words = topChallengingWords(
     [rec({ challengingWords: ['Peck', 'butter'] }), rec({ challengingWords: ['peck'] })],
     5,
   );
   assertEq(words[0], { word: 'peck', count: 2 }, 'case-insensitive frequency ranking');
+}
+
+// ---------------------------------------------------------------------------
+section('sessionSkills / speakingScore / skillWindow / scoreBand / focusSkill');
+{
+  // Default fixture: accuracy 85, fluency 82, pace 100 (on target), fillers 88
+  // (2 over 2min → 1/min), intonation 75. Mean = 86.
+  const base = rec({});
+  assertEq(speakingScore(base), 86, 'session score is the mean of the five skills');
+  assertEq(sessionSkills(base).pace, 100, 'on-target pace scores 100');
+
+  const freestyle = rec({ mode: 'freestyle', accuracy: 0, completeness: 0, source: 'live' });
+  const fsSkills = sessionSkills(freestyle);
+  assertEq(fsSkills.accuracy, null, 'freestyle has no articulation');
+  assertEq(fsSkills.intonation, null, 'live source has no expression');
+  // Only fluency 82, pace 100, fillers 88 count → 90.
+  assertEq(speakingScore(freestyle), 90, 'freestyle scores on the three eligible skills');
+
+  const live = rec({ source: 'live' });
+  assertEq(sessionSkills(live).intonation, null, 'placeholder intonation excluded on live');
+  // 85, 82, 100, 88 → 88.75 → 89. The excluded 75 would have dragged it to 86.
+  assertEq(speakingScore(live), 89, 'live excludes rather than averages in the placeholder');
+
+  const noPace = rec({ paceWpm: 0 });
+  assertEq(sessionSkills(noPace).pace, null, 'zero WPM has no pacing sample');
+
+  assertEq(speakingScore([]), null, 'empty window has no score');
+  assertEq(speakingScore(rec({ accuracy: 0, fluency: 0, intonation: 0, fillerCount: 999 })), 26,
+    'a genuinely bad session still scores (floors are 30/0, not null)');
+
+  // A window averages each skill first, then means the skills, so a skill
+  // measured by only one session still counts equally.
+  const window = skillWindow([base, freestyle]);
+  assertEq(window.accuracy.samples, 1, 'only the passage session measured articulation');
+  assertEq(window.accuracy.value, 85, 'single-sample skill keeps its value');
+  assertEq(window.fluency.samples, 2, 'both sessions measured flow');
+  assertEq(window.intonation.samples, 1, 'only the azure session measured expression');
+  assertEq(skillWindow([]).fluency.samples, 0, 'empty window has no samples');
+
+  assertEq(focusSkill(skillWindow([base])), 'intonation', 'lowest scoring skill takes focus');
+  assertEq(focusSkill(skillWindow([])), null, 'no focus without data');
+  // Flow and Fillers are always eligible, so a freestyle+live+no-pace session
+  // still has two scored skills and focus falls to the lower of them.
+  assertEq(focusSkill(skillWindow([rec({ paceWpm: 0, source: 'live', mode: 'freestyle' })])),
+    'fluency', 'focus picks the lower of the two always-eligible skills');
+
+  assertEq(scoreBand(90), 'Orator', 'band boundary 90');
+  assertEq(scoreBand(89), 'Strong', 'just below 90');
+  assertEq(scoreBand(75), 'Strong', 'band boundary 75');
+  assertEq(scoreBand(74), 'Steady', 'just below 75');
+  assertEq(scoreBand(60), 'Steady', 'band boundary 60');
+  assertEq(scoreBand(59), 'Building', 'just below 60');
+  assertEq(scoreBand(0), 'Building', 'floor');
+
+  assertEq(cleanWordPct({ good: 90, mispronounced: 5, omitted: 5, inserted: 3 }), 90,
+    'clean share ignores insertions');
+  assertEq(cleanWordPct({ good: 0, mispronounced: 0, omitted: 0, inserted: 4 }), null,
+    'no assessed words → no clean share');
+}
+
+// ---------------------------------------------------------------------------
+section('dailySpeakingScores / recordsBetween / longestStreakRange');
+{
+  const spread = [
+    rec({ completedAt: NOW - 2 * DAY }),
+    rec({ completedAt: NOW, fillerCount: 0 }),
+  ];
+  const daily = dailySpeakingScores(spread, 3, NOW);
+  assertEq(daily.length, 3, 'one entry per day');
+  assertEq(daily[0].score, 86, 'two days ago scored');
+  assertEq(daily[1].score, null, 'gap day has no score, not a zero');
+  assertEq(daily[2].score, 88, 'today scored (no fillers → 100)');
+  assertEq(dailySpeakingScores([], 7, NOW).filter((d) => d.score != null).length, 0,
+    'no history → every day null');
+
+  assertEq(recordsBetween(spread, NOW - DAY, NOW).length, 1, 'window excludes older records');
+  assertEq(recordsBetween(spread, NOW - 3 * DAY, NOW).length, 2, 'wider window includes both');
+
+  assertEq(longestStreakRange([]), null, 'no history has no streak range');
+  const single = longestStreakRange([rec({ completedAt: NOW })])!;
+  assertEq(single.length, 1, 'single day is a one-day streak');
+  assertEq(single.startMs, single.endMs, 'single day range collapses');
+
+  // Two runs: a 3-day run, then a gap, then a 2-day run. The longer one wins.
+  const runs = [
+    rec({ completedAt: NOW - 9 * DAY }),
+    rec({ completedAt: NOW - 8 * DAY }),
+    rec({ completedAt: NOW - 7 * DAY }),
+    rec({ completedAt: NOW - DAY }),
+    rec({ completedAt: NOW }),
+  ];
+  const range = longestStreakRange(runs)!;
+  assertEq(range.length, 3, 'longest of two runs');
+  assertEq(dayKey(range.startMs), dayKey(NOW - 9 * DAY), 'range starts at the run start');
+  assertEq(dayKey(range.endMs), dayKey(NOW - 7 * DAY), 'range ends at the run end');
+  assertEq(formatDayRange(range.startMs, range.endMs).includes('–'), true, 'multi-day uses en dash');
+  assertEq(formatDayRange(single.startMs, single.endMs).includes('–'), false, 'single day has no dash');
 }
 
 // ---------------------------------------------------------------------------

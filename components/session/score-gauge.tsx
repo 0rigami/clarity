@@ -5,7 +5,9 @@ import { Easing, useSharedValue, withDelay, withTiming } from 'react-native-rean
 import { AnimatedRoundedNumber } from '@/components/animated-rounded-number';
 import { palette } from '@/constants/colors';
 import { fonts } from '@/constants/fonts';
-import { scoreLabel } from '@/lib/metrics';
+import { metricColors } from '@/constants/metrics';
+import { DeltaLabel } from '@/components/metrics';
+import { scoreBand } from '@/lib/score';
 
 import { TickGauge } from './tick-gauge';
 
@@ -26,17 +28,23 @@ const TRACK = {
   dark: 'rgba(255,255,255,0.22)',
 } as const;
 
-const SECONDARY = { light: '#77777E', dark: '#9E9EA6' } as const;
-
 export type ScoreGaugeProps = {
-  /** 0–100 overall score. */
+  /** 0–100 speaking score for this session. */
   score: number;
+  /** Change vs the user's rolling average; omitted on a first session, where
+   * there's no average to compare against yet. */
+  delta?: number;
 };
 
-export function ScoreGauge({ score }: ScoreGaugeProps) {
+/**
+ * The session's speaking score. Reads `NN /100` with its band word — the same
+ * unit and the same vocabulary as Home and Analytics, so the number a user sees
+ * here is the number they'll recognize everywhere else.
+ */
+export function ScoreGauge({ score, delta }: ScoreGaugeProps) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const foreground = palette[scheme].foreground;
-  const secondary = SECONDARY[scheme];
+  const theme = metricColors[scheme];
 
   const clamped = Math.max(0, Math.min(score, 100));
   const progress = useSharedValue(0);
@@ -68,19 +76,41 @@ export function ScoreGauge({ score }: ScoreGaugeProps) {
       fill={foreground}
       track={TRACK[scheme]}
       style={styles.gauge}>
-      {/* Fixed-height box: SwiftUI Hosts don't self-size reliably in flex. */}
-      <View style={styles.scoreBox}>
-        <AnimatedRoundedNumber
-          text={`${displayScore}%`}
-          value={displayScore}
-          color={foreground}
-          fontSize={54}
-          fontFamily={fonts.bold}
-          weight="bold"
-          duration={0.9}
-        />
+      {/* Fixed-height boxes: SwiftUI Hosts don't self-size reliably in flex, and
+          `alignItems: 'baseline'` can't reach the text inside one — so both
+          columns are the same height and bottom-aligned instead, with the unit
+          padded up onto the digits' baseline. The rolling number carries the
+          value; "/100" is a static sibling so it doesn't animate with the
+          digits. */}
+      <View style={styles.scoreRow}>
+        <View style={styles.scoreBox}>
+          <AnimatedRoundedNumber
+            text={`${displayScore}`}
+            value={displayScore}
+            color={foreground}
+            fontSize={56}
+            fontFamily={fonts.heavy}
+            weight="heavy"
+            duration={0.9}
+          />
+        </View>
+        <View style={styles.maxBox}>
+          <Text style={[styles.max, { color: theme.unit }]}>/100</Text>
+        </View>
       </View>
-      <Text style={[styles.label, { color: secondary }]}>{scoreLabel(clamped)}</Text>
+      <Text style={[styles.band, { color: theme.label }]}>{scoreBand(clamped)}</Text>
+      {delta != null && delta !== 0 && (
+        <View
+          style={[
+            styles.deltaPill,
+            { backgroundColor: delta > 0 ? theme.positiveBg : 'transparent' },
+          ]}>
+          {/* "vs avg", not "vs your average": the gauge's hollow is only ~150px
+              wide at this height, and the longer phrase overflows onto the
+              ticks once the delta reaches two digits. */}
+          <DeltaLabel delta={delta} suffix="vs avg" />
+        </View>
+      )}
     </TickGauge>
   );
 }
@@ -89,13 +119,35 @@ const styles = StyleSheet.create({
   gauge: {
     alignSelf: 'center',
   },
+  scoreRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 3,
+  },
   scoreBox: {
     height: 64,
     justifyContent: 'center',
   },
-  label: {
-    fontSize: 17,
+  maxBox: {
+    height: 64,
+    justifyContent: 'flex-end',
+    // Lifts "/100" off the box floor onto the 56px digits' baseline.
+    paddingBottom: 11,
+  },
+  max: {
+    fontSize: 20,
+    fontFamily: fonts.semibold,
+  },
+  band: {
+    fontSize: 15,
     fontFamily: fonts.semibold,
     marginTop: 2,
+  },
+  deltaPill: {
+    marginTop: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 11,
+    borderRadius: 50,
+    borderCurve: 'continuous',
   },
 });

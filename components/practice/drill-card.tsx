@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native'
 
 import { DRILL_META } from '@/constants/drills';
 import { fonts } from '@/constants/fonts';
-import { SKILL_ICONS, SKILL_LABELS } from '@/constants/skills';
+import { SKILL_ICONS, SKILL_LABELS } from '@/constants/metrics';
 import type { Passage } from '@/types/session';
 
 const THEME = {
