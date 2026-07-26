@@ -5,6 +5,7 @@ import {
   Mic01Icon,
   StarIcon,
 } from '@hugeicons-pro/core-stroke-rounded';
+import { GlassContainer } from 'expo-glass-effect';
 import { useMemo, useState } from 'react';
 import { StyleSheet, Text, useColorScheme, View } from 'react-native';
 import Animated from 'react-native-reanimated';
@@ -162,34 +163,39 @@ export default function AnalyticsScreen() {
       </IntroReveal>
       <IntroReveal order={6} fade={false} style={styles.sectionCard}>
         {/* Three counters, so the second row carries one full-width card rather
-            than a half-width card beside a gap. */}
-        <View style={styles.counterRow}>
-          <CounterCard
-            icon={Clock01Icon}
-            label="Practice time"
-            value={summary.minutes}
-            unit="min"
-            delta={summary.minutesDelta}
-            deltaSuffix="min"
-          />
-          <CounterCard
-            icon={Mic01Icon}
-            label="Sessions"
-            value={summary.sessions}
-            unit={summary.sessions === 1 ? 'run' : 'runs'}
-            delta={summary.sessionsDelta}
-          />
-        </View>
-        <View style={styles.counterRowLast}>
-          <CounterCard
-            icon={FireIcon}
-            label="Day streak"
-            value={summary.streak}
-            unit={summary.streak === 1 ? 'day' : 'days'}
-            delta={summary.streakDelta}
-            deltaSuffix="days"
-          />
-        </View>
+            than a half-width card beside a gap. GlassContainer groups all three
+            so their glass composites as one set; `spacing` is left unset on
+            purpose — raising it past the 10px gaps would fuse the cards into a
+            single blob instead of keeping them a legible grid. */}
+        <GlassContainer style={styles.counterGroup}>
+          <View style={styles.counterRow}>
+            <CounterCard
+              icon={Clock01Icon}
+              label="Practice time"
+              value={summary.minutes}
+              unit="min"
+              delta={summary.minutesDelta}
+              deltaSuffix="min"
+            />
+            <CounterCard
+              icon={Mic01Icon}
+              label="Sessions"
+              value={summary.sessions}
+              unit={summary.sessions === 1 ? 'run' : 'runs'}
+              delta={summary.sessionsDelta}
+            />
+          </View>
+          <View style={styles.counterRow}>
+            <CounterCard
+              icon={FireIcon}
+              label="Day streak"
+              value={summary.streak}
+              unit={summary.streak === 1 ? 'day' : 'days'}
+              delta={summary.streakDelta}
+              deltaSuffix={Math.abs(summary.streakDelta) === 1 ? 'day' : 'days'}
+            />
+          </View>
+        </GlassContainer>
       </IntroReveal>
 
       {recordRows.length > 0 && (
@@ -238,12 +244,11 @@ const styles = StyleSheet.create({
   sectionCard: {
     marginTop: 12,
   },
+  counterGroup: {
+    gap: 10,
+  },
   counterRow: {
     flexDirection: 'row',
     gap: 10,
-  },
-  counterRowLast: {
-    flexDirection: 'row',
-    marginTop: 10,
   },
 });

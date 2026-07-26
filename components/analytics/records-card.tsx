@@ -1,4 +1,5 @@
 import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react-native';
+import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Fragment } from 'react';
 import { StyleSheet, Text, useColorScheme, View } from 'react-native';
 
@@ -24,9 +25,10 @@ export type RecordRow = {
 export function RecordsCard({ rows }: { rows: readonly RecordRow[] }) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const theme = metricColors[scheme];
+  const hasGlass = isLiquidGlassAvailable();
 
-  return (
-    <View style={[styles.card, { backgroundColor: theme.card }]}>
+  const body = (
+    <>
       {rows.map((row, i) => (
         <Fragment key={row.title}>
           {i > 0 && <View style={[styles.divider, { backgroundColor: theme.divider }]} />}
@@ -55,7 +57,17 @@ export function RecordsCard({ rows }: { rows: readonly RecordRow[] }) {
           </View>
         </Fragment>
       ))}
-    </View>
+    </>
+  );
+
+  return hasGlass ? (
+    <GlassView
+      glassEffectStyle="regular"
+      style={[styles.card, { backgroundColor: theme.glassTint }]}>
+      {body}
+    </GlassView>
+  ) : (
+    <View style={[styles.card, { backgroundColor: theme.solidFallback }]}>{body}</View>
   );
 }
 
@@ -65,10 +77,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     borderRadius: 32,
     borderCurve: 'continuous',
-    shadowColor: '#000000',
-    shadowOpacity: 0.04,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 6 },
+    overflow: 'hidden',
   },
   row: {
     flexDirection: 'row',

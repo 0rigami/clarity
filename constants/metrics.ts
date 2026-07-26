@@ -101,8 +101,6 @@ export const metricColors = {
     iconTile: '#F2F2F5',
     glassTint: 'rgba(255,255,255,0.45)',
     solidFallback: 'rgba(255,255,255,0.96)',
-    /** Solid card surface (counters, records — not frosted in the design). */
-    card: '#FFFFFF',
   },
   dark: {
     ink: '#FFFFFF',
@@ -122,7 +120,6 @@ export const metricColors = {
     iconTile: 'rgba(255,255,255,0.08)',
     glassTint: 'rgba(10,10,12,0.55)',
     solidFallback: 'rgba(26,26,30,0.96)',
-    card: '#1A1A1E',
   },
 } as const;
 

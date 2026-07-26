@@ -1,4 +1,5 @@
 import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react-native';
+import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { StyleSheet, Text, useColorScheme, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { fonts } from '@/constants/fonts';
@@ -8,8 +9,8 @@ import { DeltaLabel } from './delta-label';
 
 /**
  * One effort counter: labelled icon, a big value with its unit, and the change
- * since last week. Solid rather than frosted — the design keeps the small
- * counters opaque so they read as a grid against the glass cards above them.
+ * since last week. Frosted like every other card in the app; group siblings in
+ * a `GlassContainer` so their glass composites as one set.
  *
  * The value is always ink. Effort is effort; there's no "good" or "bad" amount
  * of practice to color it by.
@@ -38,9 +39,10 @@ export function CounterCard({
 }: CounterCardProps) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const theme = metricColors[scheme];
+  const hasGlass = isLiquidGlassAvailable();
 
-  return (
-    <View style={[styles.card, { backgroundColor: theme.card }, style]}>
+  const body = (
+    <>
       <View style={styles.header}>
         <HugeiconsIcon icon={icon} size={15} color={theme.unit} strokeWidth={1.9} />
         <Text style={[styles.label, { color: theme.label }]} numberOfLines={1}>
@@ -57,7 +59,17 @@ export function CounterCard({
           {delta != null && <DeltaLabel delta={delta} suffix={deltaSuffix} hideZero />}
         </View>
       </View>
-    </View>
+    </>
+  );
+
+  return hasGlass ? (
+    <GlassView
+      glassEffectStyle="regular"
+      style={[styles.card, { backgroundColor: theme.glassTint }, style]}>
+      {body}
+    </GlassView>
+  ) : (
+    <View style={[styles.card, { backgroundColor: theme.solidFallback }, style]}>{body}</View>
   );
 }
 
@@ -67,11 +79,8 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 26,
     borderCurve: 'continuous',
+    overflow: 'hidden',
     gap: 10,
-    shadowColor: '#000000',
-    shadowOpacity: 0.04,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 4 },
   },
   header: {
     flexDirection: 'row',
