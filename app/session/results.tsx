@@ -11,6 +11,7 @@ import { ResultsFooter } from '@/components/session/results-footer';
 import { ScoreGauge } from '@/components/session/score-gauge';
 import { SessionTopBar } from '@/components/session/session-top-bar';
 import { TranscriptCard } from '@/components/session/transcript-card';
+import { UnscoredNotice } from '@/components/session/unscored-notice';
 import { WordBreakdown } from '@/components/session/word-breakdown';
 import { palette } from '@/constants/colors';
 import { fonts } from '@/constants/fonts';
@@ -37,27 +38,35 @@ function dismissToHome() {
 }
 
 export default function ResultsScreen() {
-  const { result, bumpRetry } = useSessionContext();
+  const { result, recordId, bumpRetry } = useSessionContext();
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const background = palette[scheme].background;
   const records = useSessionRecords();
-  // recordSession() runs before this screen is pushed, so the store already
-  // holds the session being shown. Drop it (records are oldest-first, so it's
-  // the last one) or "vs your average" would measure this session partly
-  // against the average it just moved — damping every real improvement.
-  const history = useMemo(() => records.slice(0, -1), [records]);
+  // recordSession() runs before this screen is pushed, so the store already holds
+  // the session being shown. Drop it or "vs your average" would measure this
+  // session partly against the average it just moved, damping every real
+  // improvement.
+  //
+  // Excluded BY ID, not by position: when the attempt wasn't persisted (nothing
+  // spoken, or the write failed) there is nothing to drop, and the old
+  // `records.slice(0, -1)` then removed the user's previous real session instead.
+  const history = useMemo(
+    () => (recordId ? records.filter((r) => r.id !== recordId) : records),
+    [records, recordId],
+  );
 
   // This session's five skills, plus how each compares to the user's running
   // average. Same shape the Analytics card consumes — one component renders
   // both, so the two screens can't name or order the skills differently.
-  const { skills, deltas, captions, averageScore } = useMemo(() => {
+  const { skills, deltas, captions, averageScore, sessionScore } = useMemo(() => {
     if (!result) {
       return {
         skills: {} as Record<SkillKey, SkillEstimate>,
         deltas: {} as Partial<Record<SkillKey, number>>,
         captions: {} as Partial<Record<SkillKey, string>>,
         averageScore: null as number | null,
+        sessionScore: null as number | null,
       };
     }
 
@@ -86,10 +95,13 @@ export default function ResultsScreen() {
           avgWpm: result.paceWpm > 0 ? result.paceWpm : null,
           targetWpm: result.paceWpm > 0 ? result.targetWpm : null,
           fillers: result.fillerCount,
+          pauses: result.pauseCount ?? null,
+          longestPauseMs: result.longestPauseMs ?? null,
         },
         'session',
       ),
       averageScore: speakingScore(history),
+      sessionScore: speakingScore(result),
     };
   }, [result, history]);
 
@@ -126,10 +138,24 @@ export default function ResultsScreen() {
           paddingBottom: insets.bottom + 150,
           paddingHorizontal: 20,
         }}>
-        <ScoreGauge
-          score={result.overallScore}
-          delta={averageScore != null ? result.overallScore - averageScore : undefined}
-        />
+        {/* The DERIVED score, never the persisted one. A session below the
+            scoring floor has no score at all, and `overallScore` would render a
+            confident 0 rather than saying so. */}
+        {sessionScore != null ? (
+          <ScoreGauge
+            score={sessionScore}
+            delta={averageScore != null ? sessionScore - averageScore : undefined}
+          />
+        ) : (
+          <UnscoredNotice
+            title={recordId == null ? "We didn't hear anything" : 'Too short to score'}
+            detail={
+              recordId == null
+                ? 'Check that your mic is enabled and try speaking a little closer to it.'
+                : 'It still counts toward your practice time and your streak.'
+            }
+          />
+        )}
         <View style={styles.playback}>
           <PlaybackPill result={result} />
         </View>

@@ -20,7 +20,12 @@ import {
   selectBestHypothesis,
 } from '@/services/live-recognition';
 import { claimEngine, releaseEngine } from '@/services/recognition-owner';
-import { buildAzureResult, buildChunks, buildLiveFallbackResult } from '@/services/scoring';
+import {
+  buildAzureResult,
+  buildChunks,
+  buildLiveFallbackResult,
+  pauseStats,
+} from '@/services/scoring';
 import {
   concatWavs,
   downsampleWaveform,
@@ -566,6 +571,10 @@ export function usePracticeSession(passage: Passage): PracticeSession {
       waveform = null;
     }
 
+    // The raw measure behind the Flow caption, from the same commit timeline
+    // buildChunks consumes.
+    const pauses = pauseStats(aligner.timeline, m.segmentActiveStartMs);
+
     const base = {
       tokenized,
       statuses,
@@ -576,6 +585,8 @@ export function usePracticeSession(passage: Passage): PracticeSession {
       durationMs,
       audioUri,
       waveform: waveform ?? waveformFromMeterHistory(m.meterHistory),
+      pauseCount: pauses.pauseCount,
+      longestPauseMs: pauses.longestPauseMs,
     };
 
     const key = process.env.EXPO_PUBLIC_AZURE_SPEECH_KEY;
@@ -715,6 +726,10 @@ export function usePracticeSession(passage: Passage): PracticeSession {
       async stop(): Promise<SessionResult> {
         const m = machineRef.current!;
         if (m.status === 'done' && m.result) return m.result;
+        // `resetMachine` mints a fresh sessionId, so this doubles as an epoch:
+        // if it changes while we're awaiting, a restart took the machine over
+        // and this stop must not touch it on the way out.
+        const epoch = m.sessionId;
         m.expectEnd = true;
         m.stopping = true;
         setSpeechActive(m, false);
@@ -746,6 +761,13 @@ export function usePracticeSession(passage: Passage): PracticeSession {
             waveform: waveformFromMeterHistory(m.meterHistory),
           });
         }
+
+        // A restart superseded this attempt while we were awaiting. Hand the
+        // result back so the caller can still bank the partial attempt, but
+        // leave the machine alone: it now belongs to a live session, and
+        // forcing 'done' here would release the mic and delete the segment
+        // files out from under the read the user just started.
+        if (m.sessionId !== epoch) return finalResult;
 
         m.result = finalResult;
         if (mounted.current) setResult(finalResult);

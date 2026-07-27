@@ -18,12 +18,15 @@ import { WordsToMaster } from '@/components/words-to-master';
 import { palette } from '@/constants/colors';
 import { fonts } from '@/constants/fonts';
 import { PASSAGES } from '@/constants/passages';
-import { useSessionRecords, useDerivedStats } from '@/hooks/use-session-history';
+import { useSessionRecords, useDerivedStats, useWords } from '@/hooks/use-session-history';
+import { useNow } from '@/hooks/use-now';
 import { useSpeakingSummary } from '@/hooks/use-speaking-summary';
-import { topChallengingWords, totals } from '@/lib/stats';
+import { totals } from '@/lib/stats';
 
-function greeting() {
-  const hour = new Date().getHours();
+/** Takes `now` from the shared clock so it refreshes on foreground instead of
+ * being frozen at whatever hour the screen first mounted. */
+function greeting(now: number) {
+  const hour = new Date(now).getHours();
   if (hour < 5) return 'Good Evening';
   if (hour < 12) return 'Good Morning';
   if (hour < 17) return 'Good Afternoon';
@@ -36,6 +39,7 @@ export default function HomeScreen() {
   const dark = useColorScheme() === 'dark';
   const colors = dark ? palette.dark : palette.light;
 
+  const now = useNow();
   const stats = useDerivedStats();
   const records = useSessionRecords();
   // The same rolling-7-day figures Analytics leads with, so the two tabs can
@@ -47,20 +51,20 @@ export default function HomeScreen() {
   // Progress + trouble words are derived only from real history — never demo
   // data. With nothing recorded yet, `progress` is null and the section shows
   // an empty state that says so rather than inventing numbers.
-  const { progress, words } = useMemo(() => {
-    if (records.length === 0) {
-      return { progress: null, words: [] as { word: string; count: number }[] };
-    }
+  const progress = useMemo(() => {
+    if (records.length === 0) return null;
     const t = totals(records);
     return {
-      progress: {
-        totalMinutes: Math.round(t.minutes),
-        totalSessions: t.sessions,
-        longestStreak: t.longestStreak,
-      },
-      words: topChallengingWords(records, 5),
+      totalMinutes: Math.round(t.minutes),
+      totalSessions: t.sessions,
+      longestStreak: t.longestStreak,
     };
   }, [records]);
+
+  // From the running per-word aggregates, which know whether a word is actually
+  // improving. `challengingWords` on a record only ever held a lossy top-5, so it
+  // could not tell a word the user has since mastered from one they still miss.
+  const { toMaster } = useWords(5);
 
   return (
     <Animated.ScrollView
@@ -78,7 +82,7 @@ export default function HomeScreen() {
           opacity — and gets its fade-in from the splash overlay instead. */}
       <View style={styles.header}>
         <IntroReveal order={0}>
-          <Text style={[styles.greeting, { color: colors.foreground }]}>{greeting()}</Text>
+          <Text style={[styles.greeting, { color: colors.foreground }]}>{greeting(now)}</Text>
         </IntroReveal>
         <IntroReveal order={0} fade={false}>
           <HeaderActions streak={stats.streak} />
@@ -123,7 +127,7 @@ export default function HomeScreen() {
           />
         )}
       </IntroReveal>
-      {words.length > 0 && (
+      {toMaster.length > 0 && (
         <>
           <IntroReveal order={7}>
             <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Words to master</Text>
@@ -132,7 +136,7 @@ export default function HomeScreen() {
             </Text>
           </IntroReveal>
           <IntroReveal order={8} fade={false} style={styles.sectionCard}>
-            <WordsToMaster words={words} onPracticeAll={startPractice} />
+            <WordsToMaster words={toMaster} onPracticeAll={startPractice} />
           </IntroReveal>
         </>
       )}

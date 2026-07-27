@@ -165,15 +165,21 @@ section('scoring: paceScore / fillerScore');
   assertEq(paceScore(150, 150), 100, 'on target');
   assertEq(paceScore(160, 150), 100, 'within +10%');
   assertEq(paceScore(189, 179), 100, '+5.6% still inside the ±10% score band');
-  assertEq(paceScore(0, 150), 30, 'no pace → floor');
+  // Callers exclude pace entirely when it wasn't measured, so 0 is never averaged
+  // in as a real reading.
+  assertEq(paceScore(0, 150), 0, 'unmeasured pace scores 0');
   assert(paceScore(100, 150) < paceScore(140, 150), 'slower is worse');
-  assertEq(paceScore(90, 150), 50, '0.6x ratio → 50');
-  assertEq(paceScore(45, 150), 30, '0.3x ratio → clamped to floor 30');
-  assert(paceScore(300, 150) >= 30, 'floor 30');
+  // No floor any more: the old floor of 30 on pace and fillers together meant the
+  // speaking score could never realistically drop below ~45.
+  assertEq(paceScore(90, 150), 40, '0.6x ratio → 40');
+  assertEq(paceScore(45, 150), 0, '0.3x ratio bottoms out');
+  assertEq(paceScore(300, 150), 0, 'racing at 2x target bottoms out');
+  assertEq(paceScore(165, 150), 100, 'still inside the +10% band');
 
   assertEq(fillerScore(0, 60_000), 100, 'no fillers');
-  assertEq(fillerScore(3, 60_000), 64, '3/min → 64');
-  assertEq(fillerScore(20, 60_000), 30, 'floor 30');
+  assertEq(fillerScore(3, 60_000), 70, '3/min → 70');
+  assertEq(fillerScore(10, 60_000), 0, '10/min bottoms out');
+  assertEq(fillerScore(20, 60_000), 0, 'and stays there');
 
   // Equal weighting across the five skills, so each moves the score by 1/5.
   const flat = {
@@ -333,13 +339,20 @@ section('scoring: azure aggregation + word mapping');
     // completeness capped by attempted/total = 5/6.
     assert(result.completeness <= 84, `completeness capped by omission (got ${result.completeness})`);
     // The score is the mean of the five skills, not a weighted pron blend:
-    // accuracy 90, fluency 85, pace 100 (on target), fillers 30 (one filler in
-    // 4s floors the skill), intonation 80 → 77.
-    assertEq(result.overallScore, 77, 'score is the mean of the five skills');
+    // accuracy 90, fluency 85, pace 100 (on target), fillers 40 (one filler over
+    // the 10s minimum duration → 6/min → 100 - 60), intonation 80 → 79.
+    assertEq(result.overallScore, 79, 'score is the mean of the five skills');
+    // `overallScore` is the raw formula. `speakingScore` additionally applies the
+    // eligibility gate, and this fixture speaks only five words, so it is
+    // excluded — the two agreeing unconditionally would mean the gate is not
+    // reaching the result path at all, which was the bug on the results screen.
+    assertEq(speakingScore(result), null, 'the shared definition gates this fixture out');
+    // 10s keeps the filler rate identical (fillerScore floors duration at 10s),
+    // so the expected 79 is unchanged and only the gate flips.
     assertEq(
       result.overallScore,
-      speakingScore(result),
-      'builder and the shared score definition agree',
+      speakingScore({ ...result, spokenWords: 40, durationMs: 10_000 }),
+      'builder and the shared score definition agree on a scorable session',
     );
   }
 }

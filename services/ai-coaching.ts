@@ -15,9 +15,15 @@ const MAX_CHALLENGING_WORDS = 5;
 function challengePriority(word: ResultWord): number {
   if (word.status === 'mispronounced') return word.score ?? 0;
   if (word.status === 'omitted') return 101;
-  if (word.status === 'inserted') return 102;
   return 200;
 }
+
+/** Insertions are excluded from `challengingWords` by construction. In live
+ * fallback the only spliced insertions are fillers, so "um" used to surface on
+ * the Home "Words to master" card while already being penalized through
+ * `fillerCount` — the same word cost the user twice and was then recommended as
+ * practice. `wordCounts.inserted` still carries them to the coach. */
+const CHALLENGING_STATUSES = new Set(['mispronounced', 'omitted']);
 
 /** Per-verdict counts plus the ≤5 hardest words — the summary both the AI
  * coach payload and the persisted SessionRecord keep instead of `words[]`. */
@@ -35,7 +41,7 @@ export function summarizeWords(words: readonly ResultWord[]): {
   for (const word of words) wordCounts[word.status] += 1;
 
   const challengingWords = words
-    .filter((word) => word.status !== 'good')
+    .filter((word) => CHALLENGING_STATUSES.has(word.status))
     .sort((a, b) => challengePriority(a) - challengePriority(b))
     .map((word) => word.word.trim().slice(0, 40))
     .filter((word, index, list) => word.length > 0 && list.indexOf(word) === index)

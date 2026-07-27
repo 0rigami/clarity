@@ -8,6 +8,7 @@ import {
 
 import { tokenizePassage } from '@/lib/passage-text';
 import { speakingScore } from '@/lib/score';
+import { spokenWordCount } from '@/services/scoring';
 import type {
   Passage,
   PracticeError,
@@ -60,6 +61,7 @@ function buildMockResult(passage: Passage, durationMs: number): SessionResult {
     // score definition exists to prevent.
     overallScore: speakingScore(scored) ?? 0,
     words: resultWords,
+    spokenWords: spokenWordCount(resultWords),
     audioUri: null,
     waveform,
   };

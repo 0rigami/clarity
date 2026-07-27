@@ -18,9 +18,11 @@ import {
   TELEPROMPTER_TEXT_SIZES,
 } from '@/constants/session-theme';
 import { usePracticeSession } from '@/hooks/use-practice-session';
+import { useSessionCheckpoint } from '@/hooks/use-session-checkpoint';
 import { getAnyPassage, modeForId } from '@/lib/passage-catalog';
 import { tokenizePassage } from '@/lib/passage-text';
 import { recordSession } from '@/services/session-history';
+import type { SessionEndedReason } from '@/types/history';
 
 import { useSessionContext } from './_layout';
 
@@ -85,30 +87,83 @@ export default function PracticeScreen() {
     sessionRef.current.restart();
   }, [retryToken]);
 
-  const finishSession = useCallback(async () => {
-    if (navigatedRef.current) return;
-    navigatedRef.current = true;
-    try {
-      const result = await sessionRef.current.stop();
-      // Once per attempt (navigatedRef); each retry becomes its own record.
-      recordSession(result, { mode: modeForId(passage.id), passageId: passage.id });
-      setResult(result);
-      router.push('/session/results');
-    } catch {
-      navigatedRef.current = false;
-    }
-  }, [setResult, passage.id]);
+  const meta = useMemo(
+    () => ({
+      mode: modeForId(passage.id),
+      passageId: passage.id,
+      // Snapshotted so a deleted custom passage doesn't orphan the record.
+      contentTitle: passage.title,
+    }),
+    [passage.id, passage.title],
+  );
+
+  // Crash recovery + pause-on-background. `currentWordIndex` is the live count of
+  // words spoken so far, which is what decides whether a killed session is worth
+  // recovering at all. Declared above the handlers because each terminal path
+  // has to clear the checkpoint once it has written its record.
+  const checkpoint = useSessionCheckpoint({
+    status: session.status,
+    elapsedMs: session.elapsedMs,
+    spokenWords: session.currentWordIndex,
+    fillerCount: session.fillerCount,
+    meta: { ...meta, targetWpm: passage.targetWpm },
+    onBackground: () => sessionRef.current.pause(),
+  });
+
+  const finishSession = useCallback(
+    async (endedReason: SessionEndedReason = 'stopped') => {
+      if (navigatedRef.current) return;
+      navigatedRef.current = true;
+      try {
+        const result = await sessionRef.current.stop();
+        // Once per attempt (navigatedRef); each retry becomes its own record.
+        const written = recordSession(result, { ...meta, endedReason });
+        // The attempt is on disk, so the crash checkpoint has nothing left to
+        // protect. Pushing Results does NOT unmount this screen, so without this
+        // the checkpoint would survive and be recovered as a duplicate record.
+        checkpoint.end();
+        setResult(result, written.ok ? written.record.id : null);
+        router.push('/session/results');
+      } catch {
+        navigatedRef.current = false;
+      }
+    },
+    [setResult, meta, checkpoint],
+  );
 
   // The session can complete on its own (end of passage reached).
   useEffect(() => {
-    if (session.status === 'done') finishSession();
+    if (session.status === 'done') finishSession('completed');
   }, [session.status, finishSession]);
 
+  /**
+   * Dismissing mid-read used to discard the attempt entirely, which is why
+   * practice minutes systematically undercounted real usage. Now it records the
+   * partial attempt as 'abandoned': the minutes and the streak count, but the
+   * skills ignore it, because everything past the stop point is marked omitted
+   * and would crater accuracy through no fault of the speaker.
+   */
   const handleDismiss = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    sessionRef.current.cancel();
+    const s = sessionRef.current;
+    const live = s.status === 'listening' || s.status === 'paused';
+    // Stop the 'done' effect from also pushing the results screen.
+    navigatedRef.current = true;
+    if (live) {
+      // stop() flips to 'processing' synchronously, so the unmount cleanup won't
+      // abort it. Fire and forget so dismissing stays instant — and the
+      // checkpoint is cleared only once the write has actually landed, so a kill
+      // mid-`stop()` still recovers these minutes.
+      void s
+        .stop()
+        .then((result) => recordSession(result, { ...meta, endedReason: 'abandoned' }))
+        .catch(() => {})
+        .finally(() => checkpoint.end());
+    } else {
+      checkpoint.end();
+    }
     dismissToHome();
-  }, []);
+  }, [meta, checkpoint]);
 
   const handleTextSize = useCallback(() => {
     Haptics.selectionAsync();
@@ -126,15 +181,39 @@ export default function PracticeScreen() {
     }
   }, []);
 
+  /**
+   * Restarting mid-read banks the partial attempt the same way dismissing does,
+   * so the two paths no longer disagree about whether the work happened.
+   *
+   * The restart is SEQUENCED behind the stop rather than fired alongside it.
+   * `stop()` finalizes audio and may wait on Azure; resetting the machine under
+   * it meant the stop's tail landed on the new attempt — forcing it to 'done',
+   * releasing the mic, and deleting its segment files. `navigatedRef` stays true
+   * across the wait so the 'done' effect can't push Results in the meantime.
+   */
   const handleRestart = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    navigatedRef.current = false;
-    sessionRef.current.restart();
-  }, []);
+    const s = sessionRef.current;
+    if (s.status !== 'listening' && s.status !== 'paused') {
+      navigatedRef.current = false;
+      s.restart();
+      return;
+    }
+    navigatedRef.current = true;
+    void s
+      .stop()
+      .then((result) => recordSession(result, { ...meta, endedReason: 'abandoned' }))
+      .catch(() => {})
+      .finally(() => {
+        navigatedRef.current = false;
+        sessionRef.current.restart();
+        checkpoint.begin();
+      });
+  }, [meta, checkpoint]);
 
   const handleStop = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    finishSession();
+    finishSession('stopped');
   }, [finishSession]);
 
   const teleColors: TeleprompterColors = useMemo(

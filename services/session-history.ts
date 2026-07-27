@@ -1,94 +1,86 @@
 /**
  * Persisted session history: the single store behind Home stats, Practice
- * recommendations, and the future Analytics screen.
+ * recommendations, and Analytics.
  *
- * JSON file in the document directory (cache would get purged), hydrated
- * synchronously on first access so first-frame renders see real data, held
- * in memory (records are ~300 bytes — even years of use is trivial), and
- * exposed through a subscribe/snapshot pair for useSyncExternalStore.
+ * This module is deliberately thin. All the logic — hydration, validation,
+ * quarantine, the one-time migration, crash recovery, export/import — lives in
+ * `lib/history-store.ts`, which is pure and takes its key-value backend as a
+ * parameter so it can be tested under bun. Here we only bind that store to MMKV,
+ * to expo-file-system for the legacy import, and to the app's version string.
  */
 
-import { Directory, File, Paths } from 'expo-file-system';
+import Constants from 'expo-constants';
+import { File, Paths } from 'expo-file-system';
 
+import { createHistoryStore } from '@/lib/history-store';
+import { durable, kv } from '@/services/kv';
 import { summarizeWords } from '@/services/ai-coaching';
-import type { SessionMode, SessionRecord } from '@/types/history';
+import type { SessionEndedReason, SessionMode } from '@/types/history';
 import type { SessionResult } from '@/types/session';
 
-const STORE_VERSION = 1;
+export type { WriteResult, ImportSummary, StorageStats } from '@/lib/history-store';
 
-type StoreFile = {
-  version: number;
-  records: SessionRecord[];
+/** The pre-MMKV store. Never deleted: it stays a free backup, and if MMKV is
+ * ever cleared the migration guard clears with it and the import re-runs. */
+function readLegacyJson(): string | null {
+  try {
+    const file = new File(Paths.document, 'user', 'sessions.json');
+    return file.exists ? file.textSync() : null;
+  } catch {
+    return null;
+  }
+}
+
+const store = createHistoryStore({
+  kv,
+  durable,
+  readLegacyJson,
+  appVersion: Constants.expoConfig?.version ?? undefined,
+  onWarn: (message, detail) => console.warn(message, detail),
+});
+
+export const getRecords = store.getRecords;
+export const subscribe = store.subscribe;
+export const getWordStats = store.getWordStats;
+export const removeRecord = store.removeRecord;
+export const clearHistory = store.clearAll;
+export const exportHistory = store.exportHistory;
+export const importHistory = store.importHistory;
+export const getQuarantine = store.getQuarantine;
+export const getStorageStats = store.getStats;
+export const getLastError = store.getLastError;
+export const beginSession = store.beginSession;
+export const checkpointSession = store.checkpointSession;
+export const endSession = store.endSession;
+
+export type SessionMeta = {
+  mode: SessionMode;
+  /** Defaults to 'stopped' — a deliberate finish. */
+  endedReason?: SessionEndedReason;
+  passageId?: string;
+  topicId?: string;
+  /** Snapshotted onto the record so deleting a custom passage doesn't orphan it. */
+  contentTitle?: string;
 };
 
-/** Attempts shorter than this with nothing spoken are accidental starts. */
-const MIN_MEANINGFUL_MS = 10_000;
-
-let records: readonly SessionRecord[] | null = null;
-const listeners = new Set<() => void>();
-
-function storeFile(): File {
-  return new File(Paths.document, 'user', 'sessions.json');
-}
-
-function hydrate(): readonly SessionRecord[] {
-  if (records) return records;
-  try {
-    const file = storeFile();
-    if (file.exists) {
-      const parsed = JSON.parse(file.textSync()) as StoreFile;
-      records = Array.isArray(parsed.records) ? parsed.records : [];
-    } else {
-      records = [];
-    }
-  } catch (error) {
-    // A corrupt store shouldn't brick the app; start fresh in memory and
-    // let the next successful write replace it.
-    console.warn('[session-history] failed to hydrate, starting empty', error);
-    records = [];
-  }
-  return records;
-}
-
-function persist(next: readonly SessionRecord[]) {
-  try {
-    new Directory(Paths.document, 'user').create({ intermediates: true, idempotent: true });
-    const payload: StoreFile = { version: STORE_VERSION, records: [...next] };
-    storeFile().write(JSON.stringify(payload));
-  } catch (error) {
-    console.warn('[session-history] failed to persist', error);
-  }
-}
-
-export function getRecords(): readonly SessionRecord[] {
-  return hydrate();
-}
-
-export function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-export function addRecord(record: SessionRecord) {
-  records = [...hydrate(), record];
-  persist(records);
-  for (const listener of listeners) listener();
-}
-
-export function recordFromResult(
-  result: SessionResult,
-  meta: { mode: SessionMode; passageId?: string; topicId?: string },
-): SessionRecord {
-  const completedAt = Date.now();
+/**
+ * The one call sites use: builds the slim record, persists it, folds the per-word
+ * verdicts into the mastery aggregates, and reports what happened.
+ *
+ * Returns a result rather than `SessionRecord | null` so callers can tell "not
+ * saved because nothing was spoken" from "tried to save and the write failed" —
+ * and so the results screen can exclude this session from its baseline by id
+ * instead of assuming it is the last record in the store.
+ */
+export function recordSession(result: SessionResult, meta: SessionMeta) {
   const { wordCounts, challengingWords } = summarizeWords(result.words);
-  return {
-    id: `${completedAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-    completedAt,
+  return store.recordSession({
     mode: meta.mode,
-    ...(meta.passageId != null ? { passageId: meta.passageId } : {}),
-    ...(meta.topicId != null ? { topicId: meta.topicId } : {}),
+    endedReason: meta.endedReason ?? 'stopped',
+    passageId: meta.passageId,
+    topicId: meta.topicId,
+    contentTitle: meta.contentTitle,
     durationMs: result.durationMs,
-    overallScore: result.overallScore,
     accuracy: result.accuracy,
     fluency: result.fluency,
     completeness: result.completeness,
@@ -96,25 +88,21 @@ export function recordFromResult(
     paceWpm: result.paceWpm,
     targetWpm: result.targetWpm,
     fillerCount: result.fillerCount,
+    // Computed by the result builders, so the record and the results screen are
+    // judged by the same measure.
+    spokenWords: result.spokenWords,
+    pauseCount: result.pauseCount ?? undefined,
+    longestPauseMs: result.longestPauseMs ?? undefined,
     source: result.source,
     wordCounts,
     challengingWords,
-  };
+    words: result.words,
+  });
 }
 
-/**
- * The one call sites use: guards out accidental starts (a few seconds with
- * nothing spoken), builds the slim record, and persists it. Returns the
- * record, or null when the attempt was skipped.
- */
-export function recordSession(
-  result: SessionResult,
-  meta: { mode: SessionMode; passageId?: string; topicId?: string },
-): SessionRecord | null {
-  const record = recordFromResult(result, meta);
-  const nothingSpoken =
-    record.wordCounts.good === 0 && (result.transcript ?? '').trim().length === 0;
-  if (result.durationMs < MIN_MEANINGFUL_MS && nothingSpoken) return null;
-  addRecord(record);
-  return record;
+if (__DEV__) {
+  // Seeding and inspection from the Metro JS debugger. iOS simulators have no
+  // speech recognizer, so this is the only way to exercise analytics on one.
+  const { installDevHandle } = require('@/services/history-dev') as typeof import('@/services/history-dev');
+  installDevHandle(store);
 }

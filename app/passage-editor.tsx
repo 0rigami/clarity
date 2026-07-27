@@ -38,6 +38,7 @@ const THEME = {
     buttonLabel: '#FFFFFF',
     buttonDisabled: 'rgba(17,17,20,0.18)',
     buttonDisabledLabel: 'rgba(255,255,255,0.85)',
+    error: '#FF3B30',
   },
   dark: {
     secondary: '#9E9EA6',
@@ -47,6 +48,7 @@ const THEME = {
     buttonLabel: '#111114',
     buttonDisabled: 'rgba(255,255,255,0.14)',
     buttonDisabledLabel: 'rgba(17,17,20,0.6)',
+    error: '#FF453A',
   },
 } as const;
 
@@ -70,6 +72,7 @@ export default function PassageEditorScreen() {
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [paceIndex, setPaceIndex] = useState(1);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const wordCount = useMemo(() => tokenizePassage(text).words.length, [text]);
   const targetWpm = PACE_OPTIONS[paceIndex].wpm;
@@ -81,10 +84,21 @@ export default function PassageEditorScreen() {
     router.back();
   };
 
+  /**
+   * `addPassage` returns null when the write could not be verified, and in that
+   * case the passage is in neither the store nor the in-memory list. Dismissing
+   * anyway would drop the user back into a library without the passage they just
+   * typed, with no indication anything went wrong — so stay put and say so.
+   */
   const handleSave = () => {
     if (!canSave) return;
+    const saved = addPassage({ title, text, targetWpm });
+    if (!saved) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setSaveError("Couldn't save this passage. Your device may be out of storage.");
+      return;
+    }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    addPassage({ title, text, targetWpm });
     router.back();
   };
 
@@ -125,7 +139,10 @@ export default function PassageEditorScreen() {
           <Text style={[styles.caption, { color: theme.secondary }]}>Title</Text>
           <TextInput
             value={title}
-            onChangeText={setTitle}
+            onChangeText={(v) => {
+              setTitle(v);
+              setSaveError(null);
+            }}
             placeholder="My speech"
             placeholderTextColor={theme.secondary}
             maxLength={48}
@@ -137,7 +154,10 @@ export default function PassageEditorScreen() {
           <Text style={[styles.caption, { color: theme.secondary }]}>Your words</Text>
           <TextInput
             value={text}
-            onChangeText={setText}
+            onChangeText={(v) => {
+              setText(v);
+              setSaveError(null);
+            }}
             placeholder="Paste any text, speech, or transcript…"
             placeholderTextColor={theme.secondary}
             multiline
@@ -145,7 +165,9 @@ export default function PassageEditorScreen() {
             style={[styles.textInput, { color: colors.foreground }]}
           />
           <View style={[styles.divider, { backgroundColor: theme.divider }]} />
-          <Text style={[styles.meta, { color: theme.secondary }]}>{preview}</Text>
+          <Text style={[styles.meta, { color: saveError ? theme.error : theme.secondary }]}>
+            {saveError ?? preview}
+          </Text>
         </EditorCard>
 
         <EditorCard>

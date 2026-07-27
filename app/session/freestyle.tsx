@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, useColorScheme, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -15,8 +15,10 @@ import {
 } from '@/constants/session-theme';
 import { getTopic, TOPICS } from '@/constants/topics';
 import { useFreestyleSession } from '@/hooks/use-freestyle-session';
+import { useSessionCheckpoint } from '@/hooks/use-session-checkpoint';
 import { recordSession } from '@/services/session-history';
 import { FREESTYLE_TARGET_WPM } from '@/services/scoring';
+import type { SessionEndedReason } from '@/types/history';
 
 import { useSessionContext } from './_layout';
 
@@ -71,25 +73,63 @@ export default function FreestyleScreen() {
     sessionRef.current.restart();
   }, [retryToken]);
 
-  const finishSession = useCallback(async () => {
-    if (navigatedRef.current) return;
-    navigatedRef.current = true;
-    try {
-      const result = await sessionRef.current.stop();
-      // Once per attempt (navigatedRef); each retry becomes its own record.
-      recordSession(result, { mode: 'freestyle', topicId: topic.id });
-      setResult(result);
-      router.push('/session/results');
-    } catch {
-      navigatedRef.current = false;
-    }
-  }, [setResult, topic.id]);
+  const meta = useMemo(
+    () => ({ mode: 'freestyle' as const, topicId: topic.id, contentTitle: topic.title }),
+    [topic.id, topic.title],
+  );
 
+  // Declared above the handlers because each terminal path has to clear the
+  // checkpoint once it has written its record — see `useSessionCheckpoint`.
+  const checkpoint = useSessionCheckpoint({
+    status: session.status,
+    elapsedMs: session.elapsedMs,
+    // No reference text, so the committed transcript is the only word evidence.
+    spokenWords: session.finalTranscript.trim().split(/\s+/).filter(Boolean).length,
+    fillerCount: session.fillerCount,
+    meta: { ...meta, targetWpm: FREESTYLE_TARGET_WPM },
+    onBackground: () => sessionRef.current.pause(),
+  });
+
+  const finishSession = useCallback(
+    async (endedReason: SessionEndedReason = 'stopped') => {
+      if (navigatedRef.current) return;
+      navigatedRef.current = true;
+      try {
+        const result = await sessionRef.current.stop();
+        // Once per attempt (navigatedRef); each retry becomes its own record.
+        const written = recordSession(result, { ...meta, endedReason });
+        // Pushing Results does not unmount this screen, so the checkpoint has to
+        // be cleared here or it gets recovered as a duplicate next launch.
+        checkpoint.end();
+        setResult(result, written.ok ? written.record.id : null);
+        router.push('/session/results');
+      } catch {
+        navigatedRef.current = false;
+      }
+    },
+    [setResult, meta, checkpoint],
+  );
+
+  /** Records the partial attempt as 'abandoned' rather than discarding it: the
+   * minutes count toward effort, the skills ignore it. */
   const handleDismiss = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    sessionRef.current.cancel();
+    const s = sessionRef.current;
+    const live = s.status === 'listening' || s.status === 'paused';
+    navigatedRef.current = true;
+    if (live) {
+      // Checkpoint cleared only once the write lands, so a kill during stop()
+      // still recovers these minutes.
+      void s
+        .stop()
+        .then((result) => recordSession(result, { ...meta, endedReason: 'abandoned' }))
+        .catch(() => {})
+        .finally(() => checkpoint.end());
+    } else {
+      checkpoint.end();
+    }
     dismissToHome();
-  }, []);
+  }, [meta, checkpoint]);
 
   const handleTextSize = useCallback(() => {
     Haptics.selectionAsync();
@@ -107,15 +147,31 @@ export default function FreestyleScreen() {
     }
   }, []);
 
+  /** Sequenced behind the stop, never alongside it: resetting the machine under
+   * an in-flight `stop()` let the stop's tail tear down the new attempt. */
   const handleRestart = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    navigatedRef.current = false;
-    sessionRef.current.restart();
-  }, []);
+    const s = sessionRef.current;
+    if (s.status !== 'listening' && s.status !== 'paused') {
+      navigatedRef.current = false;
+      s.restart();
+      return;
+    }
+    navigatedRef.current = true;
+    void s
+      .stop()
+      .then((result) => recordSession(result, { ...meta, endedReason: 'abandoned' }))
+      .catch(() => {})
+      .finally(() => {
+        navigatedRef.current = false;
+        sessionRef.current.restart();
+        checkpoint.begin();
+      });
+  }, [meta, checkpoint]);
 
   const handleStop = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    finishSession();
+    finishSession('stopped');
   }, [finishSession]);
 
   const contentTop = insets.top + 82;

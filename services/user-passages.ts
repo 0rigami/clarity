@@ -1,20 +1,21 @@
 /**
- * User-authored passages: same JSON-file store pattern as session-history
- * (document directory, sync hydration so `getAnyPassage` can resolve ids at
- * first render, subscribe/snapshot for useSyncExternalStore).
+ * User-authored passages, stored one key per passage in the same MMKV instance
+ * as session history.
+ *
+ * Hydration stays synchronous because `getAnyPassage` (`lib/passage-catalog.ts`)
+ * resolves ids outside React during the first render.
+ *
+ * Per-key storage matters more here than for sessions: a lost session record
+ * costs a data point, a lost custom passage costs the user text they typed
+ * themselves. One unparseable entry can no longer take the whole library with it.
  */
 
-import { Directory, File, Paths } from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 
+import { KEY, META_KEY } from '@/lib/history-schema';
 import { tokenizePassage } from '@/lib/passage-text';
+import { kv } from '@/services/kv';
 import type { CustomPassage } from '@/types/session';
-
-const STORE_VERSION = 1;
-
-type StoreFile = {
-  version: number;
-  passages: CustomPassage[];
-};
 
 /** Base/blob gradient pairs assigned round-robin; alphas stay < 1 so the
  * cards' glass material reads through (same convention as PASSAGES). */
@@ -48,34 +49,92 @@ const ARTWORK_PRESETS: CustomPassage['artwork'][] = [
 let passages: readonly CustomPassage[] | null = null;
 const listeners = new Set<() => void>();
 
-function storeFile(): File {
-  return new File(Paths.document, 'user', 'passages.json');
+const passageKey = (id: string) => `${KEY.passage}${id}`;
+
+/** Enough of a shape check that one bad entry can't crash the Practice tab. */
+function parsePassage(raw: unknown): CustomPassage | null {
+  if (raw == null || typeof raw !== 'object') return null;
+  const p = raw as Record<string, unknown>;
+  if (typeof p.id !== 'string' || typeof p.text !== 'string' || p.text.length === 0) return null;
+  if (typeof p.title !== 'string') return null;
+  const artwork = p.artwork as CustomPassage['artwork'] | undefined;
+  if (!artwork || !Array.isArray(artwork.base) || !Array.isArray(artwork.blob)) return null;
+  return {
+    id: p.id,
+    title: p.title,
+    text: p.text,
+    targetWpm: typeof p.targetWpm === 'number' && p.targetWpm > 0 ? p.targetWpm : 150,
+    duration: typeof p.duration === 'string' ? p.duration : '~1 min',
+    artwork,
+    category: 'custom',
+    custom: true,
+    createdAt: typeof p.createdAt === 'number' ? p.createdAt : 0,
+  };
 }
 
+/** One-time import of the pre-MMKV `passages.json`. The file is left in place as
+ * a backup, and the guard clears with the store so it can re-run. */
+function migrateLegacy() {
+  if (kv.getBoolean(META_KEY.migratedPassagesV1) === true) return;
+  try {
+    const file = new File(Paths.document, 'user', 'passages.json');
+    if (file.exists) {
+      const parsed = JSON.parse(file.textSync()) as { passages?: unknown };
+      const rows = Array.isArray(parsed.passages) ? parsed.passages : [];
+      for (const row of rows) {
+        const passage = parsePassage(row);
+        if (passage) write(passage);
+      }
+    }
+  } catch (error) {
+    console.warn('[user-passages] legacy migration failed', error);
+  }
+  kv.set(META_KEY.migratedPassagesV1, true);
+}
+
+/**
+ * Total by construction. `lib/passage-catalog.ts` calls `getAnyPassage` outside
+ * React during the first render, so anything thrown here red-screens the app on
+ * launch rather than surfacing in an error boundary. Starting empty is what the
+ * previous file-backed store did, and it degrades to "no custom passages" rather
+ * than "no app".
+ */
 function hydrate(): readonly CustomPassage[] {
   if (passages) return passages;
+  const out: CustomPassage[] = [];
   try {
-    const file = storeFile();
-    if (file.exists) {
-      const parsed = JSON.parse(file.textSync()) as StoreFile;
-      passages = Array.isArray(parsed.passages) ? parsed.passages : [];
-    } else {
-      passages = [];
+    migrateLegacy();
+    for (const key of kv.getAllKeys()) {
+      if (!key.startsWith(KEY.passage)) continue;
+      const raw = kv.getString(key);
+      if (raw == null) continue;
+      try {
+        const passage = parsePassage(JSON.parse(raw));
+        if (passage) out.push(passage);
+        else console.warn(`[user-passages] dropping unreadable entry ${key}`);
+      } catch {
+        console.warn(`[user-passages] dropping unparseable entry ${key}`);
+      }
     }
   } catch (error) {
     console.warn('[user-passages] failed to hydrate, starting empty', error);
-    passages = [];
   }
+  passages = out.sort((a, b) => a.createdAt - b.createdAt);
   return passages;
 }
 
-function persist(next: readonly CustomPassage[]) {
+/** Write and verify. Returns false when the passage did not reach disk, so the
+ * caller never shows the user text that wasn't saved. */
+function write(passage: CustomPassage): boolean {
+  const key = passageKey(passage.id);
+  const json = JSON.stringify(passage);
   try {
-    new Directory(Paths.document, 'user').create({ intermediates: true, idempotent: true });
-    const payload: StoreFile = { version: STORE_VERSION, passages: [...next] };
-    storeFile().write(JSON.stringify(payload));
+    kv.set(key, json);
+    if (kv.getString(key) !== json) throw new Error('verify mismatch');
+    return true;
   } catch (error) {
     console.warn('[user-passages] failed to persist', error);
+    return false;
   }
 }
 
@@ -92,7 +151,11 @@ export function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-export function addPassage(input: { title: string; text: string; targetWpm: number }): CustomPassage {
+export function addPassage(input: {
+  title: string;
+  text: string;
+  targetWpm: number;
+}): CustomPassage | null {
   const existing = hydrate();
   const createdAt = Date.now();
   const wordCount = tokenizePassage(input.text).words.length;
@@ -108,14 +171,14 @@ export function addPassage(input: { title: string; text: string; targetWpm: numb
     custom: true,
     createdAt,
   };
+  if (!write(passage)) return null;
   passages = [...existing, passage];
-  persist(passages);
   for (const listener of listeners) listener();
   return passage;
 }
 
 export function removePassage(id: string) {
+  kv.remove(passageKey(id));
   passages = hydrate().filter((p) => p.id !== id);
-  persist(passages);
   for (const listener of listeners) listener();
 }

@@ -6,8 +6,9 @@ import Svg, { Line } from 'react-native-svg';
 import { DeltaLabel, ScoreValue } from '@/components/metrics';
 import { fonts } from '@/constants/fonts';
 import { metricColors } from '@/constants/metrics';
+import { SKILL_ORDER } from '@/constants/metrics';
 import { scoreBand } from '@/lib/score';
-import { dayKeyToMs } from '@/lib/stats';
+import { dayKeyToMs, type DayScore } from '@/lib/stats';
 
 const CHART_HEIGHT = 110;
 /** Floor so a very low score still renders as a visible bar, and the height a
@@ -32,7 +33,10 @@ export type SpeakingScoreCardProps = {
   /** Change vs the previous window. Omit when there's no prior data. */
   delta?: number;
   /** Oldest first, today last. `score: null` on days with no practice. */
-  days: readonly { dayKey: string; score: number | null }[];
+  days: readonly DayScore[];
+  /** Set when the window scores over more days than are plotted (the all-time
+   * range), so the caption can say the chart shows a shorter span. */
+  chartNote?: string;
 };
 
 /**
@@ -44,7 +48,7 @@ export type SpeakingScoreCardProps = {
  * it's the same window Home's card reads, so the two screens always show the
  * same figure.
  */
-export function SpeakingScoreCard({ score, delta, days }: SpeakingScoreCardProps) {
+export function SpeakingScoreCard({ score, delta, days, chartNote }: SpeakingScoreCardProps) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const theme = metricColors[scheme];
   const hasGlass = isLiquidGlassAvailable();
@@ -87,6 +91,10 @@ export function SpeakingScoreCard({ score, delta, days }: SpeakingScoreCardProps
           {days.map((day, i) => {
             const measured = day.score != null;
             const isToday = i === days.length - 1;
+            // A freestyle-only day is scored on 3 skills, a passage+Azure day on
+            // 5, so the two bars are not directly comparable. Rather than imputing
+            // a missing measurement, mark the partial ones and say so below.
+            const partial = measured && day.skillCount < SKILL_ORDER.length;
             return (
               <View
                 key={day.dayKey}
@@ -100,6 +108,7 @@ export function SpeakingScoreCard({ score, delta, days }: SpeakingScoreCardProps
                     : isToday
                       ? theme.ink
                       : theme.bar,
+                  opacity: partial ? 0.45 : 1,
                 }}
               />
             );
@@ -153,6 +162,20 @@ export function SpeakingScoreCard({ score, delta, days }: SpeakingScoreCardProps
             );
           })}
         </View>
+
+        {(days.some((d) => d.score != null && d.skillCount < SKILL_ORDER.length) ||
+          chartNote != null) && (
+          <Text style={[styles.footnote, { color: theme.caption }]}>
+            {[
+              days.some((d) => d.score != null && d.skillCount < SKILL_ORDER.length)
+                ? 'Lighter bars were scored on fewer skills.'
+                : null,
+              chartNote,
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          </Text>
+        )}
       </View>
     </>
   );
@@ -169,6 +192,11 @@ export function SpeakingScoreCard({ score, delta, days }: SpeakingScoreCardProps
 }
 
 const styles = StyleSheet.create({
+  footnote: {
+    fontSize: 12,
+    fontFamily: fonts.regular,
+    marginTop: 10,
+  },
   card: {
     padding: 22,
     borderRadius: 42,

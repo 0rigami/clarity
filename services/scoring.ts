@@ -9,7 +9,7 @@
  */
 
 import type { TokenizedPassage } from '@/lib/passage-text';
-import { clampScore, fillerScore, paceScore, speakingScore } from '@/lib/score';
+import { clampScore, fillerScore, paceScore, PAUSE_MIN_MS, speakingScore } from '@/lib/score';
 import type { ResultWord, SessionResult, WordVerdict } from '@/types/session';
 import type { CommittedInsertion, RefWordStatus, WordCommit } from './alignment';
 import type { ChunkAssessment } from './azure-pronunciation';
@@ -189,6 +189,60 @@ export function buildChunks(
 export { fillerScore, paceScore };
 
 /**
+ * Words the recognizer actually heard: those assessed as spoken, clean or not.
+ * Omissions were never uttered and insertions are fillers, so neither counts.
+ *
+ * This is what separates a real attempt from silence, and it rides on the
+ * `SessionResult` so the results screen's eligibility gate sees the same measure
+ * the persisted record is judged by.
+ */
+export function spokenWordCount(words: readonly ResultWord[]): number {
+  return words.filter((w) => w.status === 'good' || w.status === 'mispronounced').length;
+}
+
+/**
+ * Pauses over `PAUSE_MIN_MS` between spoken words — the raw measure behind the
+ * Flow caption, which previously had none because this was never recorded.
+ *
+ * Reads the same aligner commit timeline `buildChunks` consumes, with the same
+ * two-tier time resolution (recognizer timings when present, otherwise the
+ * active-ms coordinate). Commits are SORTED first: they are stored per reference
+ * word but arrive per utterance, so several words share an arrival time and the
+ * raw series can appear to move backwards.
+ *
+ * Two honest limits. Active ms excludes paused time, so a deliberate mic-off
+ * pause is correctly not counted as a disfluency. And under the fallback the gap
+ * is attributed to the first word of the burst that ended it, so the count and
+ * length are right while the placement within an utterance is coarse.
+ */
+export function pauseStats(
+  timeline: readonly (WordCommit | null)[],
+  segmentActiveStartMs: readonly number[],
+): { pauseCount: number; longestPauseMs: number } {
+  const times: number[] = [];
+  for (const commit of timeline) {
+    if (!commit) continue;
+    if (commit.endMsInSegment != null) {
+      times.push((segmentActiveStartMs[commit.segmentIndex] ?? 0) + commit.endMsInSegment);
+    } else {
+      times.push(commit.atActiveMs);
+    }
+  }
+  times.sort((a, b) => a - b);
+
+  let pauseCount = 0;
+  let longestPauseMs = 0;
+  for (let i = 1; i < times.length; i++) {
+    const gap = times[i] - times[i - 1];
+    if (gap >= PAUSE_MIN_MS) {
+      pauseCount += 1;
+      longestPauseMs = Math.max(longestPauseMs, gap);
+    }
+  }
+  return { pauseCount, longestPauseMs };
+}
+
+/**
  * Base per-display-token verdicts from live alignment. Punctuation-only
  * tokens inherit their preceding word's verdict so omitted runs render
  * contiguously.
@@ -261,6 +315,8 @@ export type ResultBuildParams = {
   durationMs: number;
   audioUri: string | null;
   waveform: number[];
+  pauseCount?: number;
+  longestPauseMs?: number;
 };
 
 /**
@@ -375,8 +431,11 @@ export function buildAzureResult(
     ...scored,
     overallScore: speakingScore(scored) ?? 0,
     words,
+    spokenWords: spokenWordCount(words),
     audioUri: params.audioUri,
     waveform: params.waveform,
+    pauseCount: params.pauseCount ?? null,
+    longestPauseMs: params.longestPauseMs ?? null,
   };
 }
 
@@ -426,8 +485,11 @@ export function buildLiveFallbackResult(params: ResultBuildParams): SessionResul
     ...scored,
     overallScore: speakingScore(scored) ?? 0,
     words,
+    spokenWords: spokenWordCount(words),
     audioUri: params.audioUri,
     waveform: params.waveform,
+    pauseCount: params.pauseCount ?? null,
+    longestPauseMs: params.longestPauseMs ?? null,
   };
 }
 
@@ -476,7 +538,15 @@ export function buildFreestyleResult(params: FreestyleResultParams): SessionResu
     overallScore: speakingScore(scored) ?? 0,
     transcript: params.transcript,
     words: [],
+    // No reference text, so the committed transcript is the only evidence of
+    // what was actually said.
+    spokenWords: params.transcript.trim().split(/\s+/).filter(Boolean).length,
     audioUri: params.audioUri,
     waveform: params.waveform,
+    // Freestyle keeps only per-utterance finals, with no per-word commits, so
+    // there is no honest pause resolution. Null degrades the Flow caption away
+    // rather than inventing a measure.
+    pauseCount: null,
+    longestPauseMs: null,
   };
 }

@@ -12,28 +12,60 @@
  */
 
 import { SCORE_BANDS, SKILL_ORDER } from '@/constants/metrics';
-import type { SessionMode, SkillEstimate, SkillKey, WordCounts } from '@/types/history';
+import type {
+  SessionEndedReason,
+  SessionMode,
+  SkillEstimate,
+  SkillKey,
+  WordCounts,
+} from '@/types/history';
 
 export const clampScore = (v: number) => Math.max(0, Math.min(100, Math.round(v)));
 
-/** Pace as a 0–100 score: full marks inside ±10% of target, falling off either
- * side, floored at 30 so one bad read doesn't zero the skill. */
+/**
+ * A session must clear BOTH floors for its five skills to mean anything. Below
+ * them it still counts toward effort (minutes, sessions, streak) but contributes
+ * no skill samples.
+ *
+ * The word count is the real gate; the duration floor only stops "three words in
+ * two seconds" from producing a wild pace. Both are set against the actual
+ * content: the shortest drill in `constants/drills.ts` is well over 10 words, so
+ * no legitimate attempt is refused a score, while a silent take fails on words
+ * alone.
+ */
+export const MIN_SCORED_MS = 8_000;
+export const MIN_SCORED_WORDS = 10;
+
+/** A silence this long between spoken words reads as a pause rather than a beat. */
+export const PAUSE_MIN_MS = 1_500;
+
+/**
+ * Pace as a 0–100 score: full marks inside ±10% of target, falling linearly to
+ * zero well outside it.
+ *
+ * There is deliberately no floor. The old floor of 30 (paired with the same on
+ * fillers) meant the speaking score could never realistically fall below ~45, so
+ * the whole 0–59 "Building" band was unreachable and week-over-week deltas read
+ * as noise. Callers exclude pace entirely when it wasn't measured, so returning
+ * 0 here never gets averaged in as a real reading.
+ */
 export function paceScore(paceWpm: number, targetWpm: number): number {
-  if (paceWpm <= 0 || targetWpm <= 0) return 30;
+  if (paceWpm <= 0 || targetWpm <= 0) return 0;
   const ratio = paceWpm / targetWpm;
   let score: number;
   if (ratio >= 0.9 && ratio <= 1.1) score = 100;
-  else if (ratio < 0.9) score = 100 - ((0.9 - ratio) / 0.3) * 50;
-  else score = 100 - ((ratio - 1.1) / 0.4) * 50;
-  return Math.round(Math.max(30, Math.min(100, score)));
+  // Zero at 0.4x target (crawling) and 1.7x (racing).
+  else if (ratio < 0.9) score = 100 - ((0.9 - ratio) / 0.5) * 100;
+  else score = 100 - ((ratio - 1.1) / 0.6) * 100;
+  return clampScore(score);
 }
 
-/** Filler density as a 0–100 score. Duration is floored at 10s so a short take
- * isn't crushed by a single "um". */
+/** Filler density as a 0–100 score, zero at 10 per minute. Duration is floored
+ * at 10s so a short take isn't crushed by a single "um". */
 export function fillerScore(fillerCount: number, durationMs: number): number {
   const minutes = Math.max(durationMs / 60_000, 1 / 6);
   const perMinute = fillerCount / minutes;
-  return Math.round(Math.max(30, 100 - 12 * perMinute));
+  return clampScore(100 - 10 * perMinute);
 }
 
 /**
@@ -53,7 +85,28 @@ export type ScoreInput = {
   fillerCount: number;
   durationMs: number;
   source: 'azure' | 'live';
+  /** Non-filler words the recognizer actually heard. Absent on records written
+   * before the field existed, which are grandfathered as scorable — they can't
+   * be re-judged, and retroactively unscoring real history is worse than
+   * trusting it. */
+  spokenWords?: number;
+  /** Absent is treated as a deliberate finish. */
+  endedReason?: SessionEndedReason;
 };
+
+/**
+ * Did the user speak enough, and finish deliberately enough, for the five skills
+ * to mean anything?
+ *
+ * Reason is checked first, which is what lets a recovered crash checkpoint carry
+ * a record full of zeros without those zeros ever reaching a skill.
+ */
+export function isScorable(input: ScoreInput): boolean {
+  const reason = input.endedReason;
+  if (reason === 'abandoned' || reason === 'interrupted' || reason === 'error') return false;
+  if (input.spokenWords == null) return true;
+  return input.durationMs >= MIN_SCORED_MS && input.spokenWords >= MIN_SCORED_WORDS;
+}
 
 /**
  * The five skills as 0–100, or null where this session couldn't measure one.
@@ -62,8 +115,17 @@ export type ScoreInput = {
  * its accuracy is a meaningless 0, and intonation is a hardcoded placeholder
  * outside Azure. Both are excluded rather than averaged in — counting them as
  * zero would crater a freestyle session and anchor every live one to 70.
+ *
+ * THE one eligibility gate. `skillWindow`, `speakingScore`, `skillProfile`,
+ * `dailySpeakingScores`, `windowRawMeasures` and `bestSession` all funnel through
+ * here, so a session that shouldn't be scored is excluded everywhere at once.
+ * Before this gate existed, 15 seconds of silence scored 81 in freestyle and 72
+ * on a passage, and counted as practice.
  */
 export function sessionSkills(input: ScoreInput): Record<SkillKey, number | null> {
+  if (!isScorable(input)) {
+    return { accuracy: null, fluency: null, pace: null, fillers: null, intonation: null };
+  }
   const freestyle = input.mode === 'freestyle';
   return {
     accuracy: freestyle ? null : input.accuracy,
@@ -157,16 +219,20 @@ export type RawMeasures = {
   targetWpm: number | null;
   /** Filler count — per session for a window, total for one session. */
   fillers: number | null;
+  /** Pauses over `PAUSE_MIN_MS` — total for one session, mean per session for a
+   * window. null when nothing in scope could measure them. */
+  pauses: number | null;
+  longestPauseMs: number | null;
 };
 
 /**
  * Captions that sit under each skill name, giving the raw measure so the units
  * live *below* the score instead of replacing it.
  *
- * Flow and Expression are deliberately absent: their raw measures (pauses over
- * ~1.5s, flat stretches) are never recorded, and inventing a caption from the
- * score would just restate the number. Wording lives here so the summary and
- * Analytics can't drift apart on it — only the filler framing differs.
+ * Expression is deliberately absent: Azure returns a single prosody score with
+ * no underlying measure in the response, so there is no raw quantity to print
+ * and restating the score would be noise. Wording lives here so the summary and
+ * Analytics can't drift apart on it — only the framing differs.
  */
 export function skillCaptions(
   raw: RawMeasures,
@@ -182,6 +248,17 @@ export function skillCaptions(
       framing === 'window'
         ? `${raw.fillers} per session`
         : `${raw.fillers} used`;
+  }
+  if (raw.pauses != null) {
+    if (framing === 'window') {
+      out.fluency = `${raw.pauses} ${raw.pauses === 1 ? 'pause' : 'pauses'} per session`;
+    } else {
+      const longest =
+        raw.longestPauseMs != null && raw.longestPauseMs > 0
+          ? ` · longest ${(raw.longestPauseMs / 1000).toFixed(1)}s`
+          : '';
+      out.fluency = `${raw.pauses} ${raw.pauses === 1 ? 'pause' : 'pauses'}${longest}`;
+    }
   }
   return out;
 }

@@ -83,6 +83,20 @@ export type SessionResult = {
   audioUri: string | null;
   /** Active speaking time, pauses excluded. */
   durationMs: number;
+  /** Silences over `PAUSE_MIN_MS` between spoken words — the raw measure behind
+   * the Flow caption. null when the session had no per-word timings to measure
+   * (freestyle keeps only per-utterance finals). */
+  pauseCount?: number | null;
+  longestPauseMs?: number | null;
+  /**
+   * Words the recognizer actually heard. Carried on the result — not just the
+   * persisted record — because the results screen scores the live `SessionResult`
+   * directly, and `isScorable` treats a missing `spokenWords` as "trust it".
+   * Without this the eligibility gate silently passed here while the same session
+   * was excluded everywhere else, so Results showed a confident score for a
+   * session that appears nowhere in Home or Analytics.
+   */
+  spokenWords: number;
   /** ~30 normalized 0..1 amplitude buckets for the playback pill. */
   waveform: number[];
   /** 'live' when Azure was unavailable/failed and scores are derived from live data. */
