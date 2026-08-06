@@ -8,16 +8,18 @@ on:
 jobs:
   publish_preview:
     name: Publish scan-only PR preview
-    # Restrict the trigger and, critically, run PR-controlled bundling in an EAS
-    # environment that contains no project variables. Same-repository branches
-    # are still untrusted until reviewed, so they must never receive preview,
+    # Restrict the trigger and, critically, run PR-controlled bundling in a
+    # dedicated secrets-free EAS environment. Custom environment names are
+    # supported by this project's EAS Production plan; `pr-preview` is configured
+    # with only the non-sensitive APP_VARIANT value. Same-repository branches are
+    # still untrusted until reviewed, so they must never receive preview,
     # development, or production secrets.
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false }}
     type: update
     environment: pr-preview
     env:
-      # This selects the preview identifiers/icon without loading the secret-bearing
-      # `preview` EAS environment. Add only audited, non-sensitive values here.
+      # Keep the safe value explicit in version control as well as in the EAS
+      # environment. Job-level env wins and loads no secret-bearing environment.
       APP_VARIANT: preview
     params:
       # Keep PRs isolated. Publishing to the shared preview channel would update
