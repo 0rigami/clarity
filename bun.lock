@@ -9,6 +9,7 @@
         "@hugeicons-pro/core-stroke-rounded": "^4.2.3",
         "@hugeicons/react-native": "^1.0.15",
         "@lottiefiles/dotlottie-react": "^0.19.12",
+        "@react-native-masked-view/masked-view": "0.3.2",
         "ai": "^7.0.36",
         "expo": "~57.0.8",
         "expo-asset": "~57.0.7",

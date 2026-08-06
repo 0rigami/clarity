@@ -96,7 +96,10 @@ export function PassageCarousel({
       showsHorizontalScrollIndicator={false}
       onScroll={onScroll}
       scrollEventThrottle={16}
-      style={{ marginHorizontal: -horizontalPadding }}
+      // overflow:visible — a ScrollView clips to its bounds by default, and
+      // the cards' glass shadows (plus the interactive press response) extend
+      // past the 6pt item gap. Same fix as the drills row on Practice.
+      style={{ marginHorizontal: -horizontalPadding, overflow: 'visible' }}
       contentContainerStyle={{ paddingHorizontal: edgePadding }}>
       {items.map((item, index) => (
         <PassageCard
