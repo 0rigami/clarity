@@ -1,4 +1,4 @@
-# Cadence
+![Cadence](gh-preview.png)
 
 A speech practice app for iOS and Android, built with Expo.
 
