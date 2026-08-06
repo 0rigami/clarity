@@ -17,6 +17,7 @@ import {
   sessionColors,
   TELEPROMPTER_TEXT_SIZES,
 } from '@/constants/session-theme';
+import { useMarkInteractive } from '@/hooks/use-mark-interactive';
 import { usePracticeSession } from '@/hooks/use-practice-session';
 import { useSessionCheckpoint } from '@/hooks/use-session-checkpoint';
 import { getAnyPassage, modeForId } from '@/lib/passage-catalog';
@@ -40,6 +41,10 @@ export default function PracticeScreen() {
   // Hooks must run unconditionally; the guard effect below backs out of the
   // route when the id is unknown before anything is visible.
   const passage = found ?? PASSAGES[0];
+
+  // An unknown id renders nothing and backs out, so only a resolved passage
+  // counts as this route being interactive.
+  useMarkInteractive(Boolean(found));
 
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const colors = sessionColors[scheme];

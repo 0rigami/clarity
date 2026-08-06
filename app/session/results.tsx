@@ -16,6 +16,7 @@ import { WordBreakdown } from '@/components/session/word-breakdown';
 import { palette } from '@/constants/colors';
 import { fonts } from '@/constants/fonts';
 import { SKILL_ORDER } from '@/constants/metrics';
+import { useMarkInteractive } from '@/hooks/use-mark-interactive';
 import { useSessionRecords } from '@/hooks/use-session-history';
 import {
   cleanWordPct,
@@ -39,6 +40,11 @@ function dismissToHome() {
 
 export default function ResultsScreen() {
   const { result, recordId, bumpRetry } = useSessionContext();
+
+  // Without a result the screen renders nothing and pops, so the score is on
+  // screen only once `result` exists.
+  useMarkInteractive(result != null);
+
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const background = palette[scheme].background;

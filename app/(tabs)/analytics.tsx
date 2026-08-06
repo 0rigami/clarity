@@ -22,6 +22,7 @@ import { SegmentedControl } from '@/components/segmented-control';
 import { IntroReveal } from '@/components/splash';
 import { palette } from '@/constants/colors';
 import { fonts } from '@/constants/fonts';
+import { useMarkInteractive } from '@/hooks/use-mark-interactive';
 import { useSessionRecords, useWords } from '@/hooks/use-session-history';
 import { useNow } from '@/hooks/use-now';
 import { useSpeakingSummary } from '@/hooks/use-speaking-summary';
@@ -40,6 +41,8 @@ const RANGE_DAYS = [7, 30, null] as const;
 const MAX_CHART_DAYS = 30;
 
 export default function AnalyticsScreen() {
+  useMarkInteractive();
+
   const onScroll = useMinimizeOnScroll();
   const insets = useSafeAreaInsets();
   const dark = useColorScheme() === 'dark';

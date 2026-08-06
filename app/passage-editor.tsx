@@ -17,6 +17,7 @@ import {
 import { SegmentedControl } from '@/components/segmented-control';
 import { palette } from '@/constants/colors';
 import { fonts } from '@/constants/fonts';
+import { useMarkInteractive } from '@/hooks/use-mark-interactive';
 import { tokenizePassage } from '@/lib/passage-text';
 import { addPassage } from '@/services/user-passages';
 
@@ -64,6 +65,8 @@ function EditorCard({ children }: { children: React.ReactNode }) {
 /** Modal for adding a user passage: title, pasted text, target pace. The
  * screen title and close button live in the native stack toolbar. */
 export default function PassageEditorScreen() {
+  useMarkInteractive();
+
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const colors = palette[scheme];
   const theme = THEME[scheme];

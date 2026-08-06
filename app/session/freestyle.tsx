@@ -15,6 +15,7 @@ import {
 } from '@/constants/session-theme';
 import { getTopic, TOPICS } from '@/constants/topics';
 import { useFreestyleSession } from '@/hooks/use-freestyle-session';
+import { useMarkInteractive } from '@/hooks/use-mark-interactive';
 import { useSessionCheckpoint } from '@/hooks/use-session-checkpoint';
 import { recordSession } from '@/services/session-history';
 import { FREESTYLE_TARGET_WPM } from '@/services/scoring';
@@ -33,6 +34,8 @@ function dismissToHome() {
 export default function FreestyleScreen() {
   const { topicId } = useLocalSearchParams<{ topicId?: string }>();
   const topic = getTopic(topicId) ?? TOPICS[0];
+
+  useMarkInteractive();
 
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const colors = sessionColors[scheme];

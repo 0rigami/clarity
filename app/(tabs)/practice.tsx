@@ -18,6 +18,7 @@ import { fonts } from '@/constants/fonts';
 import { PASSAGES } from '@/constants/passages';
 import { randomTopic, TOPICS, type FreestyleTopic } from '@/constants/topics';
 import { useCustomPassages } from '@/hooks/use-custom-passages';
+import { useMarkInteractive } from '@/hooks/use-mark-interactive';
 import { useDerivedStats, useRecommendations } from '@/hooks/use-session-history';
 import {
   FREESTYLE_ID_PREFIX,
@@ -45,6 +46,8 @@ function openContent(item: { id: string }) {
 }
 
 export default function PracticeScreen() {
+  useMarkInteractive();
+
   const onScroll = useMinimizeOnScroll();
   const insets = useSafeAreaInsets();
   const dark = useColorScheme() === 'dark';

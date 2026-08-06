@@ -18,6 +18,7 @@ import { WordsToMaster } from '@/components/words-to-master';
 import { palette } from '@/constants/colors';
 import { fonts } from '@/constants/fonts';
 import { PASSAGES } from '@/constants/passages';
+import { useMarkInteractive } from '@/hooks/use-mark-interactive';
 import { useSessionRecords, useDerivedStats, useWords } from '@/hooks/use-session-history';
 import { useNow } from '@/hooks/use-now';
 import { useSpeakingSummary } from '@/hooks/use-speaking-summary';
@@ -34,6 +35,11 @@ function greeting(now: number) {
 }
 
 export default function HomeScreen() {
+  // The launch route: its mark is what EAS Observe records as the app's TTI.
+  // History comes from the synchronous store, so the first render is the
+  // finished screen — nothing to wait on beyond the splash.
+  useMarkInteractive();
+
   const onScroll = useMinimizeOnScroll();
   const insets = useSafeAreaInsets();
   const dark = useColorScheme() === 'dark';
