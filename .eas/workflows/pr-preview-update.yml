@@ -1,9 +1,11 @@
 name: PR preview update
 
 on:
-  pull_request:
-    branches: ['main']
-    types: [opened, reopened, synchronize, ready_for_review]
+  # A maintainer must explicitly approve the exact PR revision by applying this
+  # label. Pushes do not trigger this workflow, so a later commit requires the
+  # label to be removed and applied again before a new preview is published.
+  pull_request_labeled:
+    labels: [preview-approved]
 
 jobs:
   publish_preview:
@@ -14,7 +16,7 @@ jobs:
     # with only the non-sensitive APP_VARIANT value. Same-repository branches are
     # still untrusted until reviewed, so they must never receive preview,
     # development, or production secrets.
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false }}
+    if: ${{ github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false }}
     type: update
     environment: pr-preview
     env:
@@ -33,4 +35,4 @@ jobs:
     type: github-comment
     params:
       update_group_ids: ['${{ needs.publish_preview.outputs.first_update_group_id }}']
-      message: Scan the QR code with a compatible Cadence development build to open this PR preview.
+      message: This revision was approved for preview. Scan the QR code with a clean Cadence development build or simulator.
