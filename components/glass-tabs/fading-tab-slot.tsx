@@ -33,9 +33,11 @@ function FadeIn({ focused, children }: PropsWithChildren<{ focused: boolean }>) 
   }, [focused, progress]);
 
   const style = useAnimatedStyle(() => ({
-    opacity: progress.value,
-    // Whisper of depth; never enter from nothing (scale stays ≥ 0.985).
-    transform: [{ scale: interpolate(progress.value, [0, 1], [0.985, 1]) }],
+    // Transform-only on purpose: animated opacity on an ancestor permanently
+    // kills every GlassView on the screen after a tab switch (expo/expo#41024),
+    // even once opacity settles back at 1. Same constraint as the tab bar's
+    // entrance in app/(tabs)/_layout.tsx.
+    // transform: [{ scale: interpolate(progress.value, [0, 1], [0.985, 1]) }],
   }));
 
   return <Animated.View style={[{ flex: 1 }, style]}>{children}</Animated.View>;
@@ -43,7 +45,8 @@ function FadeIn({ focused, children }: PropsWithChildren<{ focused: boolean }>) 
 
 /**
  * Drop-in for TabSlot's renderFn: identical to expo-router's default render,
- * plus a subtle fade + micro-scale on the screen becoming focused.
+ * plus a subtle micro-scale on the screen becoming focused (no fade — see
+ * the GlassView note in FadeIn).
  */
 export function renderFadingTabScreen(
   descriptor: TabsDescriptor,

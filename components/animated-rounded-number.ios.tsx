@@ -19,7 +19,11 @@ export function AnimatedRoundedNumber({
   duration,
 }: AnimatedRoundedNumberProps) {
   return (
-    <Host matchContents>
+    // ignoreSafeArea: the hosting view otherwise applies the notch/home-bar
+    // insets to the SwiftUI text whenever a value change triggers layout while
+    // the host overlaps a safe area (scrolled under the Dynamic Island, or
+    // mid navigation transition), leaving the digits pushed ~12pt off-center.
+    <Host matchContents ignoreSafeArea="all">
       <Text
         modifiers={[
           contentTransition('numericText'),

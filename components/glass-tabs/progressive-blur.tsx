@@ -1,23 +1,12 @@
+import MaskedView from '@react-native-masked-view/masked-view';
 import { BlurView } from 'expo-blur';
-import { View, ViewProps } from 'react-native';
+import { StyleSheet, View, ViewProps } from 'react-native';
 
 /** Shared falloff beyond floating navigation chrome. */
 export const CHROME_BLUR_BLEED = 44;
 
-const LAYER_HEIGHTS = [
-  '100%',
-  '88%',
-  '76%',
-  '64%',
-  '54%',
-  '44%',
-  '36%',
-  '28%',
-  '22%',
-  '16%',
-] as const;
-
 type Props = ViewProps & {
+  /** Blur strength at the anchored edge. */
   intensity?: number;
   /** Which edge the blur is anchored to (strongest there, fading away). */
   direction?: 'top' | 'bottom';
@@ -26,32 +15,35 @@ type Props = ViewProps & {
 };
 
 /**
- * Progressive (gradient) blur: strongest at the anchored edge, fading to
- * none. iOS has no public variable-blur API, so we stack many thin
- * BlurViews with a tiny per-layer intensity — each layer's edge adds only
- * an imperceptible step, so the falloff reads as continuous. A soft
- * gradient smooths the tail and keeps overlaid content legible.
+ * Progressive (gradient) blur: one BlurView alpha-masked by an eased
+ * gradient, so the material fades continuously with no layer seams —
+ * full strength through the first 30%, easing to nothing at the far
+ * edge. A soft gradient scrim keeps overlaid chrome legible.
  */
 export function ProgressiveBlur({
   style,
-  intensity = 5,
+  intensity = 40,
   direction = 'top',
   tint = 'dark',
   ...rest
 }: Props) {
-  const anchor = direction === 'top' ? { top: 0 } : { bottom: 0 };
+  const toEdge = direction === 'top' ? 'bottom' : 'top';
   const rgb = tint === 'dark' ? '0,0,0' : '255,255,255';
 
   return (
     <View pointerEvents="none" style={style} {...rest}>
-      {LAYER_HEIGHTS.map((height) => (
-        <BlurView
-          key={height}
-          tint={tint}
-          intensity={intensity}
-          style={{ position: 'absolute', left: 0, right: 0, height, ...anchor }}
-        />
-      ))}
+      <MaskedView
+        style={StyleSheet.absoluteFill}
+        maskElement={
+          <View
+            style={{
+              flex: 1,
+              experimental_backgroundImage: `linear-gradient(to ${toEdge}, rgb(0,0,0) 0%, rgb(0,0,0) 30%, rgba(0,0,0,0.95) 45%, rgba(0,0,0,0.82) 58%, rgba(0,0,0,0.62) 70%, rgba(0,0,0,0.38) 81%, rgba(0,0,0,0.16) 91%, rgba(0,0,0,0) 100%)`,
+            }}
+          />
+        }>
+        <BlurView tint={tint} intensity={intensity} style={StyleSheet.absoluteFill} />
+      </MaskedView>
       <View
         style={{
           position: 'absolute',
@@ -59,7 +51,7 @@ export function ProgressiveBlur({
           left: 0,
           right: 0,
           bottom: 0,
-          experimental_backgroundImage: `linear-gradient(to ${direction === 'top' ? 'bottom' : 'top'}, rgba(${rgb},0.70) 0%, rgba(${rgb},0.32) 42%, rgba(${rgb},0.08) 68%, rgba(${rgb},0) 88%)`,
+          experimental_backgroundImage: `linear-gradient(to ${toEdge}, rgba(${rgb},0.70) 0%, rgba(${rgb},0.32) 42%, rgba(${rgb},0.08) 68%, rgba(${rgb},0) 88%)`,
         }}
       />
     </View>
