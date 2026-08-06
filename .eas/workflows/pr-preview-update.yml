@@ -1,0 +1,38 @@
+name: PR preview update
+
+on:
+  # A maintainer must explicitly approve the exact PR revision by applying this
+  # label. Pushes do not trigger this workflow, so a later commit requires the
+  # label to be removed and applied again before a new preview is published.
+  pull_request_labeled:
+    labels: [preview-approved]
+
+jobs:
+  publish_preview:
+    name: Publish scan-only PR preview
+    # Restrict the trigger and, critically, run PR-controlled bundling in a
+    # dedicated secrets-free EAS environment. Custom environment names are
+    # supported by this project's EAS Production plan; `pr-preview` is configured
+    # with only the non-sensitive APP_VARIANT value. Same-repository branches are
+    # still untrusted until reviewed, so they must never receive preview,
+    # development, or production secrets.
+    if: ${{ github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false }}
+    type: update
+    environment: pr-preview
+    env:
+      # Keep the safe value explicit in version control as well as in the EAS
+      # environment. Job-level env wins and loads no secret-bearing environment.
+      APP_VARIANT: preview
+    params:
+      # Keep PRs isolated. Publishing to the shared preview channel would update
+      # every installed preview build without requiring the reviewer to scan.
+      branch: pr-${{ github.event.pull_request.number }}
+      platform: all
+
+  comment:
+    name: Add preview QR to the PR
+    needs: [publish_preview]
+    type: github-comment
+    params:
+      update_group_ids: ['${{ needs.publish_preview.outputs.first_update_group_id }}']
+      message: This revision was approved for preview. Scan the QR code with a clean Cadence development build or simulator.
