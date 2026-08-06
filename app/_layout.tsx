@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { ProgressiveBlur } from '@/components/glass-tabs';
 import { IntroRevealProvider, SplashOverlay } from '@/components/splash';
 import { palette } from '@/constants/colors';
 import { fontAssets, fonts } from '@/constants/fonts';
@@ -71,8 +72,8 @@ export default function RootLayout() {
               />
               {/* Keeps its native header: a custom left-placed title and the
                   close button live in the stack toolbar (Stack.Toolbar inside
-                  the route). Transparent, blur-free bar so the screen
-                  background shows through. */}
+                  the route). The shared progressive blur lets the form scroll
+                  beneath the toolbar without introducing a hard material edge. */}
               <Stack.Screen
                 name="passage-editor"
                 options={{
@@ -81,6 +82,13 @@ export default function RootLayout() {
                   headerTransparent: true,
                   headerShadowVisible: false,
                   headerBlurEffect: 'none',
+                  headerBackground: () => (
+                    <ProgressiveBlur
+                      direction="top"
+                      tint={dark ? 'dark' : 'light'}
+                      style={{ flex: 1 }}
+                    />
+                  ),
                 }}
               />
             </Stack>
