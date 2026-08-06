@@ -1,0 +1,27 @@
+name: PR preview update
+
+on:
+  pull_request:
+    branches: ['main']
+    types: [opened, reopened, synchronize, ready_for_review]
+
+jobs:
+  publish_preview:
+    name: Publish scan-only PR preview
+    # Do not expose preview environment variables to code from forks or drafts.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false }}
+    type: update
+    environment: preview
+    params:
+      # Keep PRs isolated. Publishing to the shared preview channel would update
+      # every installed preview build without requiring the reviewer to scan.
+      branch: pr-${{ github.event.pull_request.number }}
+      platform: all
+
+  comment:
+    name: Add preview QR to the PR
+    needs: [publish_preview]
+    type: github-comment
+    params:
+      update_group_ids: ['${{ needs.publish_preview.outputs.first_update_group_id }}']
+      message: Scan the QR code with a compatible Cadence development build to open this PR preview.

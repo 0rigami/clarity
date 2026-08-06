@@ -61,6 +61,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     slug: config.slug ?? 'cadence',
     name: getName(config.name ?? 'Cadence'),
     scheme: getScheme(baseScheme),
+    runtimeVersion: {
+      policy: 'appVersion',
+    },
+    updates: {
+      ...config.updates,
+      url: 'https://u.expo.dev/654f9e52-e892-44e4-a4b8-9aa700fef15b',
+    },
     ios: {
       ...config.ios,
       bundleIdentifier: getBundleId(),
