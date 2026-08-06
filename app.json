@@ -16,7 +16,7 @@
         "NSPhotoLibraryUsageDescription": "$(PRODUCT_NAME) does not access your photos. This permission is referenced by a system framework used for file handling, and your photo library is never read without your consent.",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "bundleIdentifier": "com.exponathan.cadence"
+      "bundleIdentifier": "com.schroedernathan.cadence"
     },
     "android": {
       "adaptiveIcon": {
@@ -31,7 +31,8 @@
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
-      ]
+      ],
+      "package": "com.schroedernathan.cadence"
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -65,7 +66,9 @@
       "typedRoutes": true
     },
     "extra": {
-      "router": {},
+      "router": {
+        "origin": "https://exponathan-cadence.expo.app"
+      },
       "eas": {
         "projectId": "654f9e52-e892-44e4-a4b8-9aa700fef15b"
       }

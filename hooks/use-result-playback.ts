@@ -7,9 +7,15 @@ import {
 
 import type { ResultPlayback } from '@/types/session';
 
+// interruptionMode 'doNotMix' is load-bearing on iOS: it is the only value that
+// leaves expo-audio with no AVAudioSession category options, which is the only
+// branch where it passes mode: .default. Any other value sets the category
+// without a mode, so the recognizer's .measurement mode survives and playback
+// comes out of the receiver (call speaker), processing disabled.
 const RESULT_PLAYBACK_AUDIO_MODE = {
   allowsRecording: false,
   playsInSilentMode: true,
+  interruptionMode: 'doNotMix',
   shouldRouteThroughEarpiece: false,
 } as const;
 
@@ -40,10 +46,11 @@ export function useResultPlayback(audioUri: string | null, durationMs: number): 
   const [simPositionMs, setSimPositionMs] = useState(0);
   const simPositionRef = useRef(0);
 
-  // Speech recognition uses iOS's play-and-record category. Restore the
-  // standard playback category so the recording comes from the main speaker,
-  // not the receiver used for calls. Re-assert this in toggle() in case another
-  // native module changes the shared audio session after this effect runs.
+  // Speech recognition leaves the shared session on play-and-record with the
+  // .measurement mode and never restores it. Reset category and mode so the
+  // recording plays through the main speaker with normal output processing.
+  // Re-assert this in toggle() in case another native module changes the
+  // shared audio session after this effect runs.
   useEffect(() => {
     if (audioUri) void routeAudioToSpeaker();
   }, [audioUri]);

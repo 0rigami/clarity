@@ -1,0 +1,78 @@
+{
+  // Default model for every agent. Override per-agent via frontmatter in the
+  // agent's markdown, or at runtime with the REVIEWER_MODEL env var
+  // (e.g. REVIEWER_MODEL=openai/gpt-5.4-mini).
+  "model": "openai/gpt-5.5",
+
+  // Agents: every markdown file in agents/ is one reviewer (id = filename).
+  // Add or remove files to change the roster — no list needed here.
+  // shared.md (prepended to every agent + coordinator) and coordinator.md are
+  // reserved filenames. Per-agent overrides go in each file's YAML frontmatter,
+  // e.g. `---\nmodel: openai/gpt-5.5-pro\n---`.
+
+  "policy": {
+    // Phase 1: keep signal high by surfacing only critical/warning.
+    "includeSuggestions": false
+    // "maxFindings": 10
+  },
+
+  // Files to always skip, in addition to the built-in defaults (lockfiles,
+  // *.min.js, *.map, __snapshots__/*.snap, @generated markers).
+  "noise": { "additionalIgnores": [] },
+
+  // Large diffs are split into focused chunks by changed-line count, plus a
+  // cross-cutting pass for multi-file issues. Diffs under maxChangedLines are one
+  // full-context pass. Defaults shown; raise/lower per your model + PR sizes.
+  // Concurrency defaults by auth mode: 6 with an API key, 3 on a subscription
+  // (oauth) credential — one account handles many parallel streams poorly, and
+  // several PRs may review on the same credential at once. Set it to override.
+  // "chunk": { "maxChangedLines": 1000, "maxFiles": 20, "concurrency": 4 },
+
+  // Which PRs `ecr ci` reviews. This is the source of truth for trigger policy;
+  // the scaffolded workflow always calls `ecr ci` and lets this decide. (If you'd
+  // rather gate in the workflow instead, add an `if:` to the job — see the
+  // workflow template — and this still applies on top.)
+  //   "trigger": "all"   — review every PR, unless it has the `skipLabel`.
+  //   "trigger": "label" — review only PRs labeled `label` (or `label:<agent>`).
+  // The `skipLabel` is write-gated (only maintainers can add labels), so a PR
+  // author can't opt their own PR out.
+  "review": { "trigger": "all", "label": "ai-review", "skipLabel": "ai-review:skip" },
+
+  // A maintainer comment containing this marker skips the CI review.
+  "breakGlass": { "marker": "/skip-review" },
+
+  // HTML marker used to find + update the single PR comment. Keep it stable.
+  "commentTag": "expo-ai-code-reviewer",
+
+  // How model credentials are provided. Default: an OpenAI API key.
+  //   "api-key": tokenEnv names the env var holding a provider API key. In CI,
+  //              store the key as a repo secret and pass it under that env var
+  //              (the scaffolded workflow does). If you omit `auth` entirely,
+  //              OpenCode's own login / ambient provider env vars are used.
+  // For Anthropic/Claude, set provider "anthropic", tokenEnv "ANTHROPIC_API_KEY",
+  // and an anthropic/... model above. For another provider, omit `auth` and set
+  // REVIEWER_MODEL after an `opencode auth login` for that provider.
+  //
+  // MIXED setup (a ChatGPT/Codex subscription for the default models, plus a
+  // metered API key for pro-tier models the subscription doesn't offer): use the
+  // per-provider map instead, reference `openai-api/...` models in the frontmatter
+  // of the agents that need the pro tier, and set ECR_EXPECTED_TOKEN_ENV in the
+  // workflow to the comma-separated set of both env names.
+  //   "auth": { "providers": {
+  //     "openai":     { "mode": "oauth",   "tokenEnv": "CODEX_OAUTH_ACCESS_TOKEN" },
+  //     "openai-api": { "mode": "api-key", "tokenEnv": "OPENAI_API_KEY", "upstream": "openai" }
+  //   } }
+  // (openai oauth: tokenEnv holds the ACCESS token from an `opencode auth login`
+  // ChatGPT sign-in — `ecr setup-auth` extracts it. NEVER share the refresh
+  // token: it is single-use and dies on first rotation.)
+  // ChatGPT/Codex subscription instead of a metered API key. `ecr setup-auth`
+  // runs the bundled `opencode auth login` (browser sign-in) and prints the
+  // `export CODEX_OAUTH_ACCESS_TOKEN=…` line for your shell config.
+  // Concurrency drops to 3 automatically under oauth — one account handles many
+  // parallel streams poorly.
+  "auth": {
+    "mode": "oauth",
+    "provider": "openai",
+    "tokenEnv": "CODEX_OAUTH_ACCESS_TOKEN"
+  }
+}
