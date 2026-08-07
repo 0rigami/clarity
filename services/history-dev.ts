@@ -187,5 +187,5 @@ export function installDevHandle(store: HistoryStore) {
     },
   };
 
-  (globalThis as unknown as { __cadence: typeof handle }).__cadence = handle;
+  (globalThis as unknown as { __clarity: typeof handle }).__clarity = handle;
 }

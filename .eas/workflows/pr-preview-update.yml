@@ -35,4 +35,4 @@ jobs:
     type: github-comment
     params:
       update_group_ids: ['${{ needs.publish_preview.outputs.first_update_group_id }}']
-      message: This revision was approved for preview. Scan the QR code with a clean Cadence development build or simulator.
+      message: This revision was approved for preview. Scan the QR code with a clean Clarity development build or simulator.

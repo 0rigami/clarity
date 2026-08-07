@@ -1,8 +1,8 @@
-![Cadence](gh-preview.png)
+![Clarity](gh-preview.png)
 
 A speech practice app for iOS and Android, built with Expo.
 
-Read a passage out loud. Cadence listens, scores how you spoke, and tracks your
+Read a passage out loud. Clarity listens, scores how you spoke, and tracks your
 progress over time.
 
 ## What it does

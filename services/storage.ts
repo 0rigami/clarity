@@ -22,7 +22,7 @@ let instance: ReturnType<typeof createMMKV> | null = null;
 function mmkv() {
   if (!instance) {
     instance = createMMKV({
-      id: 'cadence.v1',
+      id: 'clarity.v1',
       // Practice history is the one thing in this app that cannot be
       // regenerated, so prefer salvaging a damaged file over dropping it.
       recoveryStrategy: 'recover-on-error',

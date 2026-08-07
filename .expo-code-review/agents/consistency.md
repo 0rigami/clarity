@@ -33,7 +33,7 @@ the same kind of thing, so the codebase stays uniform and predictable.
   bare `Error` when a specific type exists? Do they link to the relevant
   docs/resource when sibling errors point users somewhere to learn more?
 
-## This repo's established conventions (speech-companion / Cadence)
+## This repo's established conventions (speech-companion / Clarity)
 
 - **Metrics surfaces follow the Metrics v2 tiers.** One hero metric: "Speaking
   score", rendered `NN` + `/100`, never `%`. Exactly five skills, same names and

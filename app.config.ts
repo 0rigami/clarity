@@ -4,7 +4,7 @@ import { ConfigContext, ExpoConfig } from 'expo/config';
 // variant, so `development`, `preview`, and `production` builds install side by
 // side. The variant comes from APP_VARIANT, stored in the EAS environments and
 // pulled locally into .env.local by `eas env:pull`.
-const BUNDLE_ID = 'com.schroedernathan.cadence';
+const BUNDLE_ID = 'com.schroedernathan.clarity';
 
 function getBundleId() {
   switch (process.env.APP_VARIANT) {
@@ -54,12 +54,12 @@ function getIosIcon() {
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const iosIcon = getIosIcon();
-  const baseScheme = typeof config.scheme === 'string' ? config.scheme : 'cadence';
+  const baseScheme = typeof config.scheme === 'string' ? config.scheme : 'clarity';
 
   return {
     ...config,
-    slug: config.slug ?? 'cadence',
-    name: getName(config.name ?? 'Cadence'),
+    slug: config.slug ?? 'clarity',
+    name: getName(config.name ?? 'Clarity'),
     scheme: getScheme(baseScheme),
     runtimeVersion: {
       policy: 'appVersion',

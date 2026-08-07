@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Cadence",
-    "slug": "cadence",
-    "scheme": "cadence",
+    "name": "Clarity",
+    "slug": "clarity",
+    "scheme": "clarity",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -16,7 +16,7 @@
         "NSPhotoLibraryUsageDescription": "$(PRODUCT_NAME) does not access your photos. This permission is referenced by a system framework used for file handling, and your photo library is never read without your consent.",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "bundleIdentifier": "com.schroedernathan.cadence"
+      "bundleIdentifier": "com.schroedernathan.clarity"
     },
     "android": {
       "adaptiveIcon": {
@@ -32,7 +32,7 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ],
-      "package": "com.schroedernathan.cadence"
+      "package": "com.schroedernathan.clarity"
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -67,7 +67,7 @@
     },
     "extra": {
       "router": {
-        "origin": "https://exponathan-cadence.expo.app"
+        "origin": "https://exponathan-clarity.expo.app"
       },
       "eas": {
         "projectId": "654f9e52-e892-44e4-a4b8-9aa700fef15b"

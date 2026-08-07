@@ -253,7 +253,7 @@ export function parseWordStat(raw: unknown): WordStat | null {
 
 // --- Export envelope ---------------------------------------------------------
 
-export const EXPORT_KIND = 'cadence.history';
+export const EXPORT_KIND = 'clarity.history';
 export const EXPORT_VERSION = 1;
 
 export type HistoryExport = {

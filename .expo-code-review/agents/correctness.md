@@ -17,7 +17,7 @@ issues in the changed code.
 - Resource/async bugs: unhandled rejections, leaks, race conditions with a
   concrete trigger.
 
-## Repo-specific correctness rules (speech-companion / Cadence)
+## Repo-specific correctness rules (speech-companion / Clarity)
 
 This is an Expo SDK 57 + expo-router app. These bugs have real precedent here;
 flag them when the diff introduces one:
