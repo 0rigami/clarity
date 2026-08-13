@@ -1,10 +1,11 @@
+import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AnalyticsUpIcon } from '@hugeicons-pro/core-stroke-rounded';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import { DailyGoalCard } from '@/components/daily-goal-card';
 import { EmptyStateCard } from '@/components/empty-state-card';
@@ -23,6 +24,8 @@ import { useSessionRecords, useDerivedStats, useWords } from '@/hooks/use-sessio
 import { useNow } from '@/hooks/use-now';
 import { useSpeakingSummary } from '@/hooks/use-speaking-summary';
 import { totals } from '@/lib/stats';
+import { generateWordPracticePassage } from '@/services/practice-generation';
+import { speakWord } from '@/services/word-pronunciation';
 
 /** Takes `now` from the shared clock so it refreshes on foreground instead of
  * being frozen at whatever hour the screen first mounted. */
@@ -69,6 +72,42 @@ export default function HomeScreen() {
   // improving. `challengingWords` on a record only ever held a lossy top-5, so it
   // could not tell a word the user has since mastered from one they still miss.
   const { toMaster } = useWords(5);
+
+  const [generatingPractice, setGeneratingPractice] = useState(false);
+  const [speakingWord, setSpeakingWord] = useState<string | null>(null);
+
+  const handlePracticeAll = async () => {
+    if (generatingPractice) return;
+    setGeneratingPractice(true);
+    try {
+      const passage = await generateWordPracticePassage(toMaster.map((w) => w.word));
+      router.push(`/session/${passage.id}`);
+    } catch (error) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert(
+        'Passage not created',
+        error instanceof Error ? error.message : 'Passage generation is unavailable right now.',
+      );
+    } finally {
+      setGeneratingPractice(false);
+    }
+  };
+
+  const handleSpeak = async (word: string) => {
+    if (speakingWord) return;
+    setSpeakingWord(word);
+    try {
+      await speakWord(word);
+    } catch (error) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert(
+        'Pronunciation unavailable',
+        error instanceof Error ? error.message : 'Pronunciation audio is unavailable right now.',
+      );
+    } finally {
+      setSpeakingWord(null);
+    }
+  };
 
   return (
     <Animated.ScrollView
@@ -131,7 +170,13 @@ export default function HomeScreen() {
             <SectionHeader title="Words to master" subtitle="The ones that trip you up most often" />
           </IntroReveal>
           <IntroReveal order={8} fade={false} style={styles.sectionCard}>
-            <WordsToMaster words={toMaster} onPracticeAll={startPractice} />
+            <WordsToMaster
+              words={toMaster}
+              onPracticeAll={handlePracticeAll}
+              generating={generatingPractice}
+              onSpeak={handleSpeak}
+              speakingWord={speakingWord}
+            />
           </IntroReveal>
         </>
       )}

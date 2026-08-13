@@ -2,7 +2,7 @@ import { PlayIcon, VolumeHighIcon } from '@hugeicons-pro/core-solid-rounded';
 import { HugeiconsIcon } from '@hugeicons/react-native';
 import * as Haptics from 'expo-haptics';
 import { Fragment } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { GlassSurface, ThemedText } from '@/components/ui';
 import { radius, spacing } from '@/constants/theme';
@@ -15,19 +15,33 @@ const ROW_INSET = spacing.xl;
 /** Speaker button. 36pt of glyph inside a 44pt hit area via `hitSlop`. */
 const SPEAKER_SIZE = 36;
 
+/** Glyph size in the "Practice all" pill; the loading spinner is boxed to the
+ * same footprint so the pill doesn't change height while generating. */
+const PILL_ICON_SIZE = 13;
+
 export type WordToMaster = { word: string; count: number };
 
 export type WordsToMasterProps = {
   words: readonly WordToMaster[];
   onPracticeAll: () => void;
-  /** Play the word's pronunciation (TTS not wired yet — haptic-only for now). */
+  /** True while the practice passage is being generated; shows a spinner in the pill. */
+  generating?: boolean;
+  /** Play the word's pronunciation. */
   onSpeak?: (word: string) => void;
+  /** The word whose clip is currently loading; its speaker shows a spinner. */
+  speakingWord?: string | null;
 };
 
 /** "Words to master" body: a frosted card whose header pairs a count summary
  * with a "Practice all" pill, over one row per trouble word (frequency chip +
  * a tap-to-hear speaker). */
-export function WordsToMaster({ words, onPracticeAll, onSpeak }: WordsToMasterProps) {
+export function WordsToMaster({
+  words,
+  onPracticeAll,
+  generating = false,
+  onSpeak,
+  speakingWord,
+}: WordsToMasterProps) {
   const { colors } = useTheme();
 
   const handlePracticeAll = () => {
@@ -48,15 +62,23 @@ export function WordsToMaster({ words, onPracticeAll, onSpeak }: WordsToMasterPr
         </ThemedText>
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ busy: generating }}
+          disabled={generating}
           onPress={handlePracticeAll}
           style={({ pressed }) => [
             styles.practiceAll,
             { backgroundColor: colors.inverseSurface },
             pressed && styles.pressed,
           ]}>
-          <HugeiconsIcon icon={PlayIcon} size={13} color={colors.inverseLabel} />
+          {generating ? (
+            <View style={styles.pillSpinner}>
+              <ActivityIndicator size="small" color={colors.inverseLabel} style={styles.pillSpinnerScale} />
+            </View>
+          ) : (
+            <HugeiconsIcon icon={PlayIcon} size={PILL_ICON_SIZE} color={colors.inverseLabel} />
+          )}
           <ThemedText variant="subhead" tone="inverse">
-            Practice all
+            {generating ? 'Creating passage' : 'Practice all'}
           </ThemedText>
         </Pressable>
       </View>
@@ -78,6 +100,8 @@ export function WordsToMaster({ words, onPracticeAll, onSpeak }: WordsToMasterPr
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Hear ${item.word}`}
+              accessibilityState={{ busy: speakingWord === item.word }}
+              disabled={speakingWord === item.word}
               onPress={() => handleSpeak(item.word)}
               hitSlop={spacing.sm}
               style={({ pressed }) => [
@@ -85,7 +109,11 @@ export function WordsToMaster({ words, onPracticeAll, onSpeak }: WordsToMasterPr
                 { backgroundColor: colors.fill },
                 pressed && styles.pressedStrong,
               ]}>
-              <HugeiconsIcon icon={VolumeHighIcon} size={19} color={colors.foreground} />
+              {speakingWord === item.word ? (
+                <ActivityIndicator size="small" color={colors.foreground} />
+              ) : (
+                <HugeiconsIcon icon={VolumeHighIcon} size={19} color={colors.foreground} />
+              )}
             </Pressable>
           </View>
         </Fragment>
@@ -114,6 +142,16 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
     borderRadius: radius.full,
+  },
+  pillSpinner: {
+    width: PILL_ICON_SIZE,
+    height: PILL_ICON_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // The "small" indicator is 20pt; shrink it into the icon's 13pt footprint.
+  pillSpinnerScale: {
+    transform: [{ scale: PILL_ICON_SIZE / 20 }],
   },
   row: {
     flexDirection: 'row',
